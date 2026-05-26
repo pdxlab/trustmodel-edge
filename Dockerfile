@@ -14,7 +14,11 @@
 ARG PYTHON_VERSION=3.12
 
 # ─── Stage 1: builder ────────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM python:${PYTHON_VERSION}-slim AS builder
+# No --platform pin: builder runs for each TARGETPLATFORM (under QEMU when
+# cross-building) so the wheels it produces match the runtime stage's arch.
+# Slower than a single BUILDPLATFORM run, but required for pydantic-core /
+# httptools / uvloop / watchfiles which ship arch-specific wheels.
+FROM python:${PYTHON_VERSION}-slim AS builder
 
 WORKDIR /build
 
