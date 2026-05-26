@@ -73,6 +73,24 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0")  # noqa: S104 - container binds all
     port: int = Field(default=8080, ge=1, le=65535)
 
+    # ─── Enrollment (TRUS-987) ───────────────────────────────────────
+    # Convenience override for local dev/Docker — when set, takes
+    # precedence over reading the bootstrap-token file from disk. In K8s
+    # the Helm chart mounts the token via a Secret at
+    # bootstrap_token_path, so leave this empty there.
+    bootstrap_token: str = Field(
+        default="",
+        description="Bootstrap token override (dev/test). Empty → read from bootstrap_token_path.",
+    )
+    cluster_fingerprint: str = Field(
+        default="",
+        description="Stable cluster identifier. K8s sets via downward API; local dev leaves empty.",
+    )
+
+    # Heartbeat tick interval (server-side returns canonical 60s but we
+    # honor a local override for tests).
+    heartbeat_interval_s: int = Field(default=60, ge=5, le=3600)
+
 
 def load_settings() -> Settings:
     """Load + validate settings. Called once at app startup."""
