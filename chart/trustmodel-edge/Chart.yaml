@@ -1,0 +1,21 @@
+apiVersion: v2
+name: trustmodel-edge
+description: TrustModel Edge — in-VPC AGP data plane. Customer-deployed K8s workload that serves the AGP decide() API locally with cached policy and forwards telemetry outbound-only to TrustModel control plane.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/pdxlab/trustmodel-edge
+sources:
+  - https://github.com/pdxlab/trustmodel-edge
+maintainers:
+  - name: Predixtions Engineering
+    email: eng@predixtions.com
+keywords:
+  - trustmodel
+  - agp
+  - edge
+  - governance
+  - kubernetes
+annotations:
+  category: Security
+  licenses: Apache-2.0

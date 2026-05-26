@@ -1,0 +1,13 @@
+# Fixture values used by `helm lint --strict` + `helm template` in CI.
+# Populates the two required values so the schema validates.
+tenant: ci-tenant
+bootstrapToken: tm-bs-ci-placeholder
+autoscaling:
+  enabled: false       # HPA needs metrics-server, not present in kind
+persistence:
+  enabled: false       # no PV provisioner in kind by default
+networkPolicy:
+  enabled: false       # kind needs a CNI add-on for NetworkPolicy enforcement
+podDisruptionBudget:
+  enabled: false       # PDB doesn't matter for single-pod CI
+replicaCount: 1

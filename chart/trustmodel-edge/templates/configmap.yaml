@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "trustmodel-edge.fullname" . }}
+  labels:
+    {{- include "trustmodel-edge.labels" . | nindent 4 }}
+data:
+  EDGE_TENANT_ID: {{ .Values.tenant | quote }}
+  EDGE_CONTROL_PLANE_URL: {{ .Values.controlPlaneUrl | quote }}
+  EDGE_LOG_LEVEL: {{ .Values.logLevel | quote }}
+  EDGE_TELEMETRY_QUEUE_SIZE: {{ .Values.telemetry.queueSize | quote }}
+  EDGE_BOOTSTRAP_TOKEN_PATH: "/etc/trustmodel/bootstrap-token"
+  EDGE_STATE_DIR: "/var/lib/trustmodel"

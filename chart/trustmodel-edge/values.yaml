@@ -1,0 +1,132 @@
+# Default values for trustmodel-edge.
+#
+# Minimum required:
+#   --set bootstrapToken=tm-bs-... --set tenant=acme
+#
+# Everything else has a sensible default for EKS / GKE / AKS.
+
+# ─── Identity ────────────────────────────────────────────────────────
+# Tenant slug this Edge serves. REQUIRED — no default.
+tenant: ""
+
+# One-time bootstrap token used at first pod start to enroll with the
+# TrustModel control plane. REQUIRED — generate in cosmic-vector wizard.
+# Stored in a K8s Secret; mounted into the pod, consumed once, then ignored.
+bootstrapToken: ""
+
+# ─── Control plane (TrustModel side) ─────────────────────────────────
+controlPlaneUrl: https://api.trustmodel.ai
+
+# ─── Image ───────────────────────────────────────────────────────────
+image:
+  repository: ghcr.io/pdxlab/trustmodel-edge
+  tag: ""           # defaults to .Chart.AppVersion when empty
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+# Example for private GHCR pull:
+# imagePullSecrets:
+#   - name: ghcr-creds
+
+# ─── Naming overrides (Helm convention) ──────────────────────────────
+nameOverride: ""
+fullnameOverride: ""
+
+# ─── Replicas + autoscaling ──────────────────────────────────────────
+# Static replica count (used when autoscaling.enabled = false).
+replicaCount: 2
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+# ─── Resource limits ─────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+# ─── Observability ───────────────────────────────────────────────────
+logLevel: INFO          # DEBUG | INFO | WARNING | ERROR
+
+# ─── Telemetry buffer ────────────────────────────────────────────────
+telemetry:
+  queueSize: 10000      # max in-memory events before back-pressure
+
+# ─── Persistence (mTLS cert + policy cache + telemetry queue) ───────
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""      # empty → use cluster default
+  accessMode: ReadWriteOnce
+
+# ─── Pod scheduling ──────────────────────────────────────────────────
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+podAnnotations: {}
+podLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Pod-level security context — non-root by default (matches image USER edge:10001).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ─── Service ─────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 8080
+
+# ─── NetworkPolicy ───────────────────────────────────────────────────
+# Egress-only to TrustModel control plane + DNS. Tighten further per
+# customer policy if needed.
+networkPolicy:
+  enabled: true
+  # Optional extra egress rules (e.g., to specific in-cluster services).
+  extraEgress: []
+  # Optional in-cluster ingress sources allowed to call /v1/decide.
+  ingressFrom: []
+
+# ─── ServiceAccount ──────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: ""               # auto-generated from chart name when empty
+  annotations: {}
+
+# ─── Health probes ───────────────────────────────────────────────────
+probes:
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startup:
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 12   # 60s total — matches TRUS-986 "Ready in <60s" acceptance

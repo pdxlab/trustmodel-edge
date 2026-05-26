@@ -1,0 +1,72 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: python lint + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: pytest -q
+
+  chart:
+    name: helm lint + template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.0
+      - name: helm lint
+        run: helm lint chart/trustmodel-edge -f chart/trustmodel-edge/ci/values-ci.yaml --strict
+      - name: helm template (CI fixture)
+        run: helm template ci chart/trustmodel-edge -f chart/trustmodel-edge/ci/values-ci.yaml > /tmp/ci.yaml
+      - name: helm template (defaults)
+        run: helm template ci chart/trustmodel-edge --set tenant=ci --set bootstrapToken=tm-bs-ci > /tmp/full.yaml
+      - name: kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -strict -summary -ignore-missing-schemas /tmp/ci.yaml /tmp/full.yaml
+
+  image:
+    name: docker build (single-arch sanity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (load, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: trustmodel-edge:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Verify image <200MB
+        run: |
+          SIZE_BYTES=$(docker image inspect trustmodel-edge:ci --format '{{.Size}}')
+          SIZE_MB=$(( SIZE_BYTES / 1024 / 1024 ))
+          echo "Image size: ${SIZE_MB}MB"
+          if [ "$SIZE_MB" -ge 200 ]; then
+            echo "::error::Image size ${SIZE_MB}MB exceeds 200MB acceptance threshold (TRUS-986)"
+            exit 1
+          fi

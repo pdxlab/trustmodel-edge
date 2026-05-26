@@ -1,0 +1,19 @@
+TrustModel Edge {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}".
+
+Tenant : {{ .Values.tenant }}
+Control plane: {{ .Values.controlPlaneUrl }}
+
+Verify pods are Ready (target <60s):
+
+  kubectl --namespace {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Smoke test:
+
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+
+Reach the decide endpoint from an in-cluster agent:
+
+  http://{{ include "trustmodel-edge.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/v1/decide
+
+Note: decide / enroll / telemetry routes return 501 in v0.1.0. Real logic
+ships in TRUS-987 (enroll), TRUS-988 (decide), TRUS-989 (telemetry).
