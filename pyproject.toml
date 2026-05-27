@@ -24,6 +24,12 @@ dependencies = [
   "pydantic-settings>=2.6,<3.0",
   "structlog>=24.4,<26.0",
   "httpx>=0.27,<1.0",
+  # RS256 cert-JWT mint for the cert-authed calls to aurora-gateway
+  # (policy fetch + telemetry). PyJWT[crypto] pulls in `cryptography`
+  # so the RS256 backend is available without a separate dep.
+  "pyjwt[crypto]>=2.9,<3.0",
+  # Prometheus exposition for /metrics (TRUS-988)
+  "prometheus-client>=0.20,<1.0",
 ]
 
 [project.optional-dependencies]
