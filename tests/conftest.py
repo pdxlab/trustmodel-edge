@@ -27,13 +27,16 @@ from edge.app import create_app
 from edge.config import Settings
 from edge.policy import cache as cache_mod
 from edge.policy.bundle import EdgePolicy, Policy, PolicyRule
+from edge.telemetry import store as telemetry_store_mod
 
 
 @pytest.fixture(autouse=True)
 def _reset_singletons() -> Iterator[None]:
     cache_mod.reset_cache()
+    telemetry_store_mod.reset_store()
     yield
     cache_mod.reset_cache()
+    telemetry_store_mod.reset_store()
 
 
 @pytest.fixture
@@ -48,7 +51,7 @@ def settings(tmp_path: Path) -> Settings:
 
 
 def _stub_lifespan_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace warm + run_forever so the lifespan does not call out."""
+    """Replace warm + run_forever + telemetry sender so lifespan never calls out."""
     import asyncio
 
     from edge import app as app_mod
@@ -62,6 +65,21 @@ def _stub_lifespan_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(app_mod, "policy_warm", _warm_stub)
     monkeypatch.setattr(app_mod, "policy_run_forever", _run_forever_stub)
+
+    # Sender's run_forever would try to mint a cert-JWT against an
+    # empty state_dir. Replace it with an inert coroutine so the
+    # lifespan task can be created and cancelled without errors.
+    async def _sender_run_forever_stub(self):
+        await asyncio.Event().wait()
+
+    async def _flush_now_stub(_sender, *, deadline_seconds):
+        return 0
+
+    monkeypatch.setattr(
+        "edge.telemetry.sender.TelemetrySender.run_forever",
+        _sender_run_forever_stub,
+    )
+    monkeypatch.setattr(app_mod, "telemetry_flush_now", _flush_now_stub)
 
 
 @pytest.fixture

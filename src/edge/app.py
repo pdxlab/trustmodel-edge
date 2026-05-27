@@ -22,6 +22,10 @@ from edge.policy.client import PolicyClient
 from edge.policy.sync import run_forever as policy_run_forever
 from edge.policy.sync import warm as policy_warm
 from edge.routes import decide, enroll, health, metrics, telemetry
+from edge.telemetry import flush_now as telemetry_flush_now
+from edge.telemetry import get_store as get_telemetry_store
+from edge.telemetry import reset_store as reset_telemetry_store
+from edge.telemetry.sender import TelemetrySender
 
 log = structlog.get_logger()
 
@@ -62,18 +66,44 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.policy_sync_task = sync_task
 
+    # ── Telemetry queue + sender (TRUS-989) ─────────────────────────
+    store = get_telemetry_store(
+        state_dir=cfg.state_dir, max_size=cfg.telemetry_queue_size
+    )
+    sender = TelemetrySender(
+        store,
+        control_plane_url=str(cfg.control_plane_url),
+        state_dir=cfg.state_dir,
+        batch_size=cfg.telemetry_batch_size,
+        flush_interval_seconds=cfg.telemetry_flush_interval_seconds,
+    )
+    app.state.telemetry_sender = sender
+    sender_task = asyncio.create_task(sender.run_forever(), name="edge.telemetry.sender")
+    app.state.telemetry_sender_task = sender_task
+
     try:
         yield
     finally:
+        # Drain the telemetry queue best-effort before shutting down.
+        try:
+            drained = await telemetry_flush_now(
+                sender, deadline_seconds=cfg.telemetry_drain_timeout_seconds
+            )
+            log.info("edge.telemetry.drained", count=drained)
+        except Exception:  # noqa: BLE001
+            log.exception("edge.telemetry.drain_failed")
+
+        sender_task.cancel()
         sync_task.cancel()
         # Swallow CancelledError (expected) + any straggler exception from
-        # the loop body — we are shutting down, no point re-raising.
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await sync_task
-        # Drop the singleton so unit tests in the same process get a
-        # fresh cache. Production runs only one lifespan, so this is
-        # essentially a no-op there.
+        # the loop bodies — we're shutting down, no point re-raising.
+        for task in (sender_task, sync_task):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        # Drop singletons so tests in the same process get a fresh
+        # cache + store. Production runs only one lifespan.
         reset_cache()
+        reset_telemetry_store()
         log.info("edge.shutdown")
 
 
