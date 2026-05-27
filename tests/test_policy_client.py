@@ -69,14 +69,18 @@ async def test_fetch_happy_path_sends_signed_jwt_and_parses_response(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_fetch_404_raises_policy_not_found(tmp_path: Path) -> None:
-    handler = lambda _: httpx.Response(404, json={"error": "no_active_policy"})
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "no_active_policy"})
+
     with pytest.raises(PolicyNotFound):
         await _client(handler, tmp_path).fetch()
 
 
 @pytest.mark.asyncio
 async def test_fetch_5xx_raises_policy_fetch_error(tmp_path: Path) -> None:
-    handler = lambda _: httpx.Response(503, text="upstream down")
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="upstream down")
+
     with pytest.raises(PolicyFetchError):
         await _client(handler, tmp_path).fetch()
 
@@ -92,6 +96,8 @@ async def test_fetch_transport_error_raises_policy_fetch_error(tmp_path: Path) -
 
 @pytest.mark.asyncio
 async def test_fetch_malformed_body_raises_policy_fetch_error(tmp_path: Path) -> None:
-    handler = lambda _: httpx.Response(200, json={"unexpected": "shape"})
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "shape"})
+
     with pytest.raises(PolicyFetchError):
         await _client(handler, tmp_path).fetch()

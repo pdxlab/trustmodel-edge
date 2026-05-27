@@ -43,7 +43,7 @@ def _matches(pattern: MatchPattern, inp: EvaluationInput) -> bool:
     for k, v in pattern.arg_equals.items():
         if inp.args.get(k) != v:
             return False
-    if pattern.subject_attr is not None:
+    if pattern.subject_attr is not None:  # noqa: SIM102 - vendor-copied from agp-control-plane; keep parity
         if not inp.subject_attrs or pattern.subject_attr not in inp.subject_attrs:
             return False
     return True
