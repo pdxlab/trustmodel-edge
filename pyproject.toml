@@ -30,6 +30,10 @@ dependencies = [
   "pyjwt[crypto]>=2.9,<3.0",
   # Prometheus exposition for /metrics (TRUS-988)
   "prometheus-client>=0.20,<1.0",
+  # zstd compression for outbound telemetry batches (TRUS-989). Wire format:
+  # ``Content-Encoding: zstd`` + zstd-framed JSON. Gateway decodes when
+  # the header is present; falls through to plain JSON otherwise.
+  "zstandard>=0.22,<1.0",
 ]
 
 [project.optional-dependencies]
