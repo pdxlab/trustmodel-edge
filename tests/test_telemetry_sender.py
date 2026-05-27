@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import httpx
 import pytest
+import zstandard as zstd
 
 from edge.telemetry.sender import TelemetrySender, flush_now
 from edge.telemetry.store import TelemetryStore
@@ -38,6 +40,7 @@ async def test_tick_sends_batch_and_acks_on_2xx(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         captured["url"] = str(request.url)
         captured["auth"] = request.headers.get("Authorization")
+        captured["content_encoding"] = request.headers.get("Content-Encoding")
         captured["body"] = request.content
         return httpx.Response(200, json={"received": 2})
 
@@ -48,7 +51,12 @@ async def test_tick_sends_batch_and_acks_on_2xx(tmp_path: Path) -> None:
     assert store.count() == 0  # acked
     assert captured["url"] == "http://aurora.test/api/v1/edge/telemetry/"
     assert captured["auth"] == "Bearer stub-jwt"
-    assert b'"event_id"' in captured["body"]
+    # Wire format: zstd-compressed JSON. Decompress + parse to verify
+    # the actual events made it through.
+    assert captured["content_encoding"] == "zstd"
+    decompressed = zstd.ZstdDecompressor().decompress(captured["body"])
+    parsed = json.loads(decompressed)
+    assert {e["event_id"] for e in parsed["events"]} == {"a", "b"}
 
 
 @pytest.mark.asyncio

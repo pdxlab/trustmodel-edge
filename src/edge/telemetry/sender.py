@@ -21,11 +21,13 @@ buffered events as possible make it out before the pod exits.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
 import httpx
+import zstandard as zstd
 
 from edge.policy.jwt import mint_cert_jwt
 from edge.telemetry.store import TelemetryStore
@@ -34,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 _PATH = "/api/v1/edge/telemetry/"
 _MAX_BACKOFF_SECONDS = 60.0
+
+# Single shared compressor — zstd compressors are cheap to construct but
+# reusing one lets the dictionary warm up across batches. Level 3 is the
+# default; gives ~3x reduction on JSON audit batches at sub-ms cost.
+_ZSTD_COMPRESSOR = zstd.ZstdCompressor(level=3)
 
 
 class TelemetrySender:
@@ -95,12 +102,22 @@ class TelemetrySender:
             self._bump_backoff()
             return 0
 
-        headers = {"Authorization": f"Bearer {token}"}
+        # zstd-compress the JSON body. Wire format: raw zstd frame, with
+        # ``Content-Encoding: zstd`` so the gateway knows to decompress.
+        # Gateway will fall through to plain JSON if the header is absent,
+        # so we can roll this back single-sided if needed.
+        raw_json = json.dumps(body, separators=(",", ":"), default=str).encode("utf-8")
+        compressed = _ZSTD_COMPRESSOR.compress(raw_json)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Content-Encoding": "zstd",
+        }
         try:
             async with httpx.AsyncClient(
                 transport=self._transport, timeout=self._timeout
             ) as client:
-                response = await client.post(self._url, json=body, headers=headers)
+                response = await client.post(self._url, content=compressed, headers=headers)
         except httpx.HTTPError as exc:
             self._store.mark_retry(ids, error=f"transport: {exc}")
             self._bump_backoff()
