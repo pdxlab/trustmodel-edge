@@ -24,6 +24,7 @@ from edge.metrics import cache_hits_total, decision_latency_ms, decisions_total
 from edge.policy.cache import get_cache
 from edge.policy.stale import fail_mode_verdict
 from edge.policy.stale import status as stale_status
+from edge.telemetry import build_audit_event, get_store
 
 router = APIRouter(tags=["decide"])
 
@@ -33,6 +34,10 @@ class DecideRequest(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
     subject: str | None = None
     subject_attrs: dict[str, Any] | None = None
+    # Optional caller identity. SVID-authed callers should still pass
+    # this so the audit row has a stable agent_id even if Edge isn't
+    # validating SVIDs yet (TRUS-987 will gate that).
+    agent_id: str | None = None
 
 
 class DecideResponse(BaseModel):
@@ -102,6 +107,25 @@ async def decide(body: DecideRequest, request: Request) -> DecideResponse:
 
     decisions_total.labels(verdict=result.verdict).inc()
     decision_latency_ms.observe(latency)
+
+    # Enqueue audit event for outbound shipping (TRUS-989). Best-effort:
+    # back-pressure / disk-full can drop the row, but the decision has
+    # already been returned to the caller. Counter for ops visibility.
+    audit = build_audit_event(
+        tenant_id=cfg.tenant_id,
+        agent_id=body.agent_id,
+        subject=body.subject,
+        policy_id=compiled.policy_id,
+        verdict=result.verdict,
+        rule_id=result.rule_id,
+        reason=result.reason,
+        tool=body.tool,
+        args=body.args,
+        redactions=result.redactions,
+        framework_tags=result.matched_framework_tags,
+        latency_ms=result.latency_ms,
+    )
+    get_store().enqueue(audit.to_dict())
 
     return DecideResponse(
         verdict=result.verdict,

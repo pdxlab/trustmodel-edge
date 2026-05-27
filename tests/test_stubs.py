@@ -16,8 +16,8 @@ from fastapi.testclient import TestClient
     ("path", "ticket"),
     [
         # /v1/decide implemented in TRUS-988 — see tests/test_decide.py.
+        # /v1/telemetry-flush implemented in TRUS-989 — see tests/test_telemetry_flush_route.py.
         ("/v1/enroll-callback", "TRUS-987"),
-        ("/v1/telemetry-flush", "TRUS-989"),
     ],
 )
 def test_stub_returns_501_with_ticket(
