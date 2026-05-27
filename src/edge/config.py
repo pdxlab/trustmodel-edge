@@ -9,6 +9,7 @@ where needed.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -61,6 +62,31 @@ class Settings(BaseSettings):
         ge=100,
         le=1_000_000,
         description="Max in-memory telemetry events before back-pressure kicks in",
+    )
+
+    # ─── Policy sync (TRUS-988) ──────────────────────────────────────
+    policy_sync_interval_seconds: int = Field(
+        default=300,
+        ge=10,
+        le=3600,
+        description="Seconds between successful policy refreshes",
+    )
+    policy_stale_threshold_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description="After this many seconds without a successful sync, "
+        "switch to the configured fail mode",
+    )
+    policy_fail_mode: Literal["open", "closed"] = Field(
+        default="closed",
+        description="What decide() returns once the cache is stale. "
+        "'closed' is fail-safe; 'open' is for non-compliance-critical tenants.",
+    )
+    policy_request_timeout_seconds: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=60.0,
+        description="HTTP timeout for /api/v1/edge/policy/current calls",
     )
 
     # ─── Observability ───────────────────────────────────────────────

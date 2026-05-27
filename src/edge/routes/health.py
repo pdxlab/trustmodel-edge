@@ -3,16 +3,19 @@
 * ``GET /health/live``  — liveness. 200 while the process is responsive.
 * ``GET /health/ready`` — readiness. 200 when Edge can serve ``decide()``.
 
-Readiness will tighten in TRUS-987 (require enrollment complete) and TRUS-988
-(require policy cache populated). For TRUS-986 the chart needs a probe target
-that returns 200, so readiness mirrors liveness today.
+Readiness flips to 200 once the policy cache is warm (either disk-loaded
+or first successful sync). Stale policy alone does not flip ready to
+503 — `decide()` still serves under the configured fail mode in that
+case, so the pod is still useful.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from edge import __version__
+from edge.policy.cache import get_cache
 
 router = APIRouter(tags=["meta"])
 
@@ -24,10 +27,23 @@ async def health_live() -> dict[str, str]:
 
 
 @router.get("/health/ready")
-async def health_ready() -> dict[str, object]:
-    """Readiness — Edge can serve traffic.
-
-    TRUS-986 scope: trivially ready. TRUS-987 / TRUS-988 will gate on
-    enrollment + first policy sync.
-    """
-    return {"status": "ready", "version": __version__}
+async def health_ready() -> JSONResponse:
+    """Readiness — Edge has a policy cached and can serve decide()."""
+    cache = get_cache()
+    if not cache.is_warm:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "version": __version__,
+                "reason": "policy cache not warm",
+            },
+        )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ready",
+            "version": __version__,
+            "last_sync_at": str(cache.last_success_at),
+        },
+    )
