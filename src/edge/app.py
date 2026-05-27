@@ -7,6 +7,7 @@ production entrypoint (``edge.__main__``) wire it to uvicorn.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -65,10 +66,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         sync_task.cancel()
-        try:
+        # Swallow CancelledError (expected) + any straggler exception from
+        # the loop body — we are shutting down, no point re-raising.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await sync_task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
         # Drop the singleton so unit tests in the same process get a
         # fresh cache. Production runs only one lifespan, so this is
         # essentially a no-op there.

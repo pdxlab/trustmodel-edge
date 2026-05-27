@@ -22,7 +22,8 @@ from edge.config import Settings
 from edge.engine import EvaluationInput, EvaluationResult, evaluate
 from edge.metrics import cache_hits_total, decision_latency_ms, decisions_total
 from edge.policy.cache import get_cache
-from edge.policy.stale import fail_mode_verdict, status as stale_status
+from edge.policy.stale import fail_mode_verdict
+from edge.policy.stale import status as stale_status
 
 router = APIRouter(tags=["decide"])
 
