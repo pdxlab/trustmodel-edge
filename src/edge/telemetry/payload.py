@@ -10,7 +10,7 @@ gateway-side schema changes — same plugin posture as the policy fetch.
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 

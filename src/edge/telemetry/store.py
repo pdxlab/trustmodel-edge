@@ -97,20 +97,19 @@ class TelemetryStore:
 
     def enqueue(self, payload: dict[str, Any]) -> bool:
         """Append an event. Returns False if back-pressure dropped it."""
-        with self._lock:
-            with self._conn() as conn:
-                row = conn.execute("SELECT COUNT(*) FROM events").fetchone()
-                if row and row[0] >= self._max_size:
-                    self._dropped += 1
-                    logger.warning(
-                        "edge.telemetry.dropped",
-                        extra={"queue_size": row[0], "total_dropped": self._dropped},
-                    )
-                    return False
-                conn.execute(
-                    "INSERT INTO events (occurred_at, payload) VALUES (?, ?)",
-                    (datetime.now(UTC).isoformat(), json.dumps(payload, default=str)),
+        with self._lock, self._conn() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM events").fetchone()
+            if row and row[0] >= self._max_size:
+                self._dropped += 1
+                logger.warning(
+                    "edge.telemetry.dropped",
+                    extra={"queue_size": row[0], "total_dropped": self._dropped},
                 )
+                return False
+            conn.execute(
+                "INSERT INTO events (occurred_at, payload) VALUES (?, ?)",
+                (datetime.now(UTC).isoformat(), json.dumps(payload, default=str)),
+            )
         return True
 
     def dequeue_batch(self, *, limit: int) -> list[QueuedEvent]:
