@@ -63,7 +63,10 @@ async def test_tick_sends_batch_and_acks_on_2xx(tmp_path: Path) -> None:
 async def test_tick_marks_retry_on_5xx_and_keeps_rows(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.enqueue({"event_id": "a"})
-    handler = lambda _: httpx.Response(503, text="upstream down")
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="upstream down")
+
     sender = _sender(store, handler, tmp_path)
 
     sent = await sender._tick()
@@ -81,7 +84,10 @@ async def test_tick_acks_on_400_to_avoid_poison_pill(tmp_path: Path) -> None:
     Ack so one bad row doesn't block the whole queue."""
     store = _store(tmp_path)
     store.enqueue({"event_id": "bad"})
-    handler = lambda _: httpx.Response(400, text="malformed")
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="malformed")
+
     sender = _sender(store, handler, tmp_path)
 
     sent = await sender._tick()
@@ -95,7 +101,10 @@ async def test_tick_marks_retry_on_404_to_handle_deploy_skew(tmp_path: Path) -> 
     caught up). Retry so we don't lose events to a temporary state."""
     store = _store(tmp_path)
     store.enqueue({"event_id": "a"})
-    handler = lambda _: httpx.Response(404, text="not found")
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
     sender = _sender(store, handler, tmp_path)
 
     sent = await sender._tick()
@@ -123,10 +132,18 @@ async def test_tick_marks_retry_on_transport_error(tmp_path: Path) -> None:
     assert "transport" in after[0].last_error
 
 
+def _500_handler(_: httpx.Request) -> httpx.Response:
+    return httpx.Response(500)
+
+
+def _200_handler(_: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"received": 0})
+
+
 @pytest.mark.asyncio
 async def test_tick_no_op_when_queue_empty(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    sender = _sender(store, lambda _: httpx.Response(500), tmp_path)
+    sender = _sender(store, _500_handler, tmp_path)
     assert await sender._tick() == 0
 
 
@@ -136,8 +153,7 @@ async def test_flush_now_drains_until_empty(tmp_path: Path) -> None:
     for i in range(25):
         store.enqueue({"event_id": str(i)})
 
-    handler = lambda _: httpx.Response(200, json={"received": 0})
-    sender = _sender(store, handler, tmp_path)
+    sender = _sender(store, _200_handler, tmp_path)
 
     sent = await flush_now(sender, deadline_seconds=2.0)
     assert sent == 25
