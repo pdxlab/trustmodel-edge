@@ -1,23 +1,29 @@
 """Shared pytest fixtures.
 
-Two TestClient fixtures:
+Three TestClient fixtures + helpers, covering the combined surface of
+TRUS-987 (enrollment + heartbeat) and TRUS-988/989 (policy cache + sync +
+telemetry sender):
 
-* ``client``      — vanilla Edge with the policy-sync warm/refresh stubbed
-  to no-ops. Cache stays cold. Use for tests that don't depend on a
-  policy being cached (health probes, stub routes, etc.).
-* ``warm_client`` — same as above but pre-seeds the cache with a small
-  demo policy so ``decide()`` returns deterministic verdicts. Use for
-  end-to-end ``/v1/decide`` tests.
+* ``client``       — vanilla Edge with enrollment skipped and policy /
+  telemetry network calls stubbed. Cache stays cold. Use for tests that
+  don't depend on a policy being cached (stub routes, basic liveness).
+* ``ready_client`` — same as ``client`` but pre-populates
+  ``app.state.heartbeat`` with a fake :class:`EdgeCredentials` so
+  enrollment-aware tests can assert behavior post-enrollment. Cache
+  stays cold (these tests cover the enrollment / heartbeat surface only).
+* ``warm_client``  — same as ``client`` but pre-seeds the policy cache
+  with a small demo bundle so ``decide()`` returns deterministic
+  verdicts. Use for end-to-end ``/v1/decide`` tests.
 
-The autouse ``_reset_singletons`` fixture drops the policy-cache and
-prometheus-metrics state between tests so a previous test's snapshot or
-counter value can't leak into the next test.
+The autouse ``_reset_singletons`` fixture drops the policy cache,
+telemetry store, and prometheus metric state between tests so a previous
+test's snapshot or counter value can't leak into the next.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -25,6 +31,8 @@ from fastapi.testclient import TestClient
 
 from edge.app import create_app
 from edge.config import Settings
+from edge.heartbeat import HeartbeatState
+from edge.identity import EdgeCredentials
 from edge.policy import cache as cache_mod
 from edge.policy.bundle import EdgePolicy, Policy, PolicyRule
 from edge.telemetry import store as telemetry_store_mod
@@ -85,7 +93,45 @@ def _stub_lifespan_network(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def client(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     _stub_lifespan_network(monkeypatch)
-    app = create_app(settings)
+    app = create_app(settings, skip_enrollment=True)
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
+def fake_credentials() -> EdgeCredentials:
+    return EdgeCredentials(
+        edge_id="00000000-0000-0000-0000-000000000001",
+        tenant_id="test-tenant",
+        cert_pem="-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+        key_pem="-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n",
+        ca_chain_pem="-----BEGIN CERTIFICATE-----\nfake-ca\n-----END CERTIFICATE-----\n",
+        cert_valid_to=datetime.now(UTC) + timedelta(days=90),
+        agp_endpoint="https://api.trustmodel.ai",
+        telemetry_endpoint="https://api.trustmodel.ai/api/v1/edge/telemetry",
+    )
+
+
+@pytest.fixture
+def ready_client(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_credentials: EdgeCredentials,
+) -> Iterator[TestClient]:
+    """Enrolled + heartbeat attached + cache warmed → /health/ready returns 200."""
+    _stub_lifespan_network(monkeypatch)
+    # Keep the seeded cache through lifespan shutdown.
+    monkeypatch.setattr("edge.app.reset_cache", lambda: None)
+
+    import asyncio
+
+    cache = cache_mod.get_cache()
+    asyncio.new_event_loop().run_until_complete(
+        cache.replace(_demo_edge_policy(), state_dir=settings.state_dir)
+    )
+
+    app = create_app(settings, skip_enrollment=True)
+    app.state.heartbeat = HeartbeatState(fake_credentials)
     with TestClient(app) as c:
         yield c
 
@@ -151,6 +197,6 @@ def warm_client(
         cache.replace(_demo_edge_policy(), state_dir=settings.state_dir)
     )
 
-    app = create_app(settings)
+    app = create_app(settings, skip_enrollment=True)
     with TestClient(app) as c:
         yield c
