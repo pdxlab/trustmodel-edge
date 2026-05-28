@@ -24,8 +24,17 @@ dependencies = [
   "pydantic-settings>=2.6,<3.0",
   "structlog>=24.4,<26.0",
   "httpx>=0.27,<1.0",
-  "cryptography>=43.0,<50.0",
-  "pyjwt>=2.9,<3.0",
+  # RS256 cert-JWT mint for the cert-authed calls to aurora-gateway
+  # (TRUS-987 enrollment / rotation / heartbeat + TRUS-988 policy fetch +
+  # TRUS-989 telemetry). pyjwt[crypto] pulls in `cryptography` so the
+  # RS256 backend is available without a separate dep.
+  "pyjwt[crypto]>=2.9,<3.0",
+  # Prometheus exposition for /metrics (TRUS-988)
+  "prometheus-client>=0.20,<1.0",
+  # zstd compression for outbound telemetry batches (TRUS-989). Wire format:
+  # ``Content-Encoding: zstd`` + zstd-framed JSON. Gateway decodes when
+  # the header is present; falls through to plain JSON otherwise.
+  "zstandard>=0.22,<1.0",
 ]
 
 [project.optional-dependencies]

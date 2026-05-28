@@ -9,6 +9,7 @@ where needed.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,12 +56,55 @@ class Settings(BaseSettings):
         description="Root of persistent state: mTLS cert, policy cache, telemetry queue",
     )
 
-    # ─── Telemetry ───────────────────────────────────────────────────
+    # ─── Telemetry (TRUS-989) ────────────────────────────────────────
     telemetry_queue_size: int = Field(
         default=10_000,
         ge=100,
         le=1_000_000,
-        description="Max in-memory telemetry events before back-pressure kicks in",
+        description="Max events in the on-disk queue before back-pressure drops new ones",
+    )
+    telemetry_batch_size: int = Field(
+        default=100,
+        ge=1,
+        le=10_000,
+        description="Max events the sender ships per POST to /api/v1/edge/telemetry",
+    )
+    telemetry_flush_interval_seconds: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=300.0,
+        description="Idle sleep between drain cycles when the queue is empty or unreachable",
+    )
+    telemetry_drain_timeout_seconds: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=300.0,
+        description="Shutdown deadline for flushing remaining queued events",
+    )
+
+    # ─── Policy sync (TRUS-988) ──────────────────────────────────────
+    policy_sync_interval_seconds: int = Field(
+        default=300,
+        ge=10,
+        le=3600,
+        description="Seconds between successful policy refreshes",
+    )
+    policy_stale_threshold_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description="After this many seconds without a successful sync, "
+        "switch to the configured fail mode",
+    )
+    policy_fail_mode: Literal["open", "closed"] = Field(
+        default="closed",
+        description="What decide() returns once the cache is stale. "
+        "'closed' is fail-safe; 'open' is for non-compliance-critical tenants.",
+    )
+    policy_request_timeout_seconds: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=60.0,
+        description="HTTP timeout for /api/v1/edge/policy/current calls",
     )
 
     # ─── Observability ───────────────────────────────────────────────

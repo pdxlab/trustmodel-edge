@@ -1,18 +1,29 @@
 """Shared pytest fixtures.
 
-A single ``client`` fixture builds the FastAPI app with test-only settings
-(no real bootstrap token / state dir / control plane required) and returns
-a TestClient.
+Three TestClient fixtures + helpers, covering the combined surface of
+TRUS-987 (enrollment + heartbeat) and TRUS-988/989 (policy cache + sync +
+telemetry sender):
 
-Tests that need enrollment-aware behavior get the ``ready_client`` fixture
-which pre-populates app.state.heartbeat with a fake EdgeCredentials so
-``/health/ready`` flips to 200.
+* ``client``       — vanilla Edge with enrollment skipped and policy /
+  telemetry network calls stubbed. Cache stays cold. Use for tests that
+  don't depend on a policy being cached (stub routes, basic liveness).
+* ``ready_client`` — same as ``client`` but pre-populates
+  ``app.state.heartbeat`` with a fake :class:`EdgeCredentials` so
+  enrollment-aware tests can assert behavior post-enrollment. Cache
+  stays cold (these tests cover the enrollment / heartbeat surface only).
+* ``warm_client``  — same as ``client`` but pre-seeds the policy cache
+  with a small demo bundle so ``decide()`` returns deterministic
+  verdicts. Use for end-to-end ``/v1/decide`` tests.
+
+The autouse ``_reset_singletons`` fixture drops the policy cache,
+telemetry store, and prometheus metric state between tests so a previous
+test's snapshot or counter value can't leak into the next.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -22,6 +33,18 @@ from edge.app import create_app
 from edge.config import Settings
 from edge.heartbeat import HeartbeatState
 from edge.identity import EdgeCredentials
+from edge.policy import cache as cache_mod
+from edge.policy.bundle import EdgePolicy, Policy, PolicyRule
+from edge.telemetry import store as telemetry_store_mod
+
+
+@pytest.fixture(autouse=True)
+def _reset_singletons() -> Iterator[None]:
+    cache_mod.reset_cache()
+    telemetry_store_mod.reset_store()
+    yield
+    cache_mod.reset_cache()
+    telemetry_store_mod.reset_store()
 
 
 @pytest.fixture
@@ -35,8 +58,41 @@ def settings(tmp_path: Path) -> Settings:
     )
 
 
+def _stub_lifespan_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace warm + run_forever + telemetry sender so lifespan never calls out."""
+    import asyncio
+
+    from edge import app as app_mod
+
+    async def _warm_stub(_client, _cache, *, state_dir, require_success=False):
+        return None
+
+    async def _run_forever_stub(_client, _cache, *, state_dir, interval_seconds):
+        # Block forever; the lifespan cancels us on shutdown.
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(app_mod, "policy_warm", _warm_stub)
+    monkeypatch.setattr(app_mod, "policy_run_forever", _run_forever_stub)
+
+    # Sender's run_forever would try to mint a cert-JWT against an
+    # empty state_dir. Replace it with an inert coroutine so the
+    # lifespan task can be created and cancelled without errors.
+    async def _sender_run_forever_stub(self):
+        await asyncio.Event().wait()
+
+    async def _flush_now_stub(_sender, *, deadline_seconds):
+        return 0
+
+    monkeypatch.setattr(
+        "edge.telemetry.sender.TelemetrySender.run_forever",
+        _sender_run_forever_stub,
+    )
+    monkeypatch.setattr(app_mod, "telemetry_flush_now", _flush_now_stub)
+
+
 @pytest.fixture
-def client(settings: Settings) -> Iterator[TestClient]:
+def client(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    _stub_lifespan_network(monkeypatch)
     app = create_app(settings, skip_enrollment=True)
     with TestClient(app) as c:
         yield c
@@ -50,15 +106,97 @@ def fake_credentials() -> EdgeCredentials:
         cert_pem="-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
         key_pem="-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n",
         ca_chain_pem="-----BEGIN CERTIFICATE-----\nfake-ca\n-----END CERTIFICATE-----\n",
-        cert_valid_to=datetime.now(timezone.utc) + timedelta(days=90),
+        cert_valid_to=datetime.now(UTC) + timedelta(days=90),
         agp_endpoint="https://api.trustmodel.ai",
         telemetry_endpoint="https://api.trustmodel.ai/api/v1/edge/telemetry",
     )
 
 
 @pytest.fixture
-def ready_client(settings: Settings, fake_credentials: EdgeCredentials) -> Iterator[TestClient]:
+def ready_client(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_credentials: EdgeCredentials,
+) -> Iterator[TestClient]:
+    """Enrolled + heartbeat attached + cache warmed → /health/ready returns 200."""
+    _stub_lifespan_network(monkeypatch)
+    # Keep the seeded cache through lifespan shutdown.
+    monkeypatch.setattr("edge.app.reset_cache", lambda: None)
+
+    import asyncio
+
+    cache = cache_mod.get_cache()
+    asyncio.new_event_loop().run_until_complete(
+        cache.replace(_demo_edge_policy(), state_dir=settings.state_dir)
+    )
+
     app = create_app(settings, skip_enrollment=True)
     app.state.heartbeat = HeartbeatState(fake_credentials)
+    with TestClient(app) as c:
+        yield c
+
+
+def _demo_edge_policy() -> EdgePolicy:
+    return EdgePolicy(
+        id="pol-demo-1",
+        tenant_id="test-tenant",
+        name="demo",
+        version="1.0.0",
+        bundle=Policy(
+            name="demo",
+            version="1.0.0",
+            description="test fixture",
+            rules=[
+                PolicyRule(
+                    rule_id="deny-email",
+                    when={"tool": "email.send"},
+                    then="deny",
+                    framework_tags=[],
+                    priority=10,
+                ),
+                PolicyRule(
+                    rule_id="redact-ssn",
+                    when={"tool": "*", "args.ssn": True},
+                    then="redact:args.ssn",
+                    framework_tags=[],
+                    priority=50,
+                ),
+                PolicyRule(
+                    rule_id="allow-rest",
+                    when={"tool": "*"},
+                    then="allow",
+                    framework_tags=[],
+                    priority=999,
+                ),
+            ],
+            framework_tags=[],
+        ),
+        is_active=True,
+        created_at=datetime.now(UTC),
+    )
+
+
+@pytest.fixture
+def warm_client(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[TestClient]:
+    """TestClient with a pre-seeded policy cache."""
+    _stub_lifespan_network(monkeypatch)
+
+    # Seed cache before lifespan kicks in. _reset_singletons already
+    # cleared it. The cache singleton survives lifespan start/stop in
+    # this test scope, but app.shutdown also calls reset_cache. To
+    # keep the cache populated through the lifespan, also stub out
+    # reset_cache so app.shutdown doesn't blow it away.
+    monkeypatch.setattr("edge.app.reset_cache", lambda: None)
+
+    import asyncio
+
+    cache = cache_mod.get_cache()
+    asyncio.new_event_loop().run_until_complete(
+        cache.replace(_demo_edge_policy(), state_dir=settings.state_dir)
+    )
+
+    app = create_app(settings, skip_enrollment=True)
     with TestClient(app) as c:
         yield c
