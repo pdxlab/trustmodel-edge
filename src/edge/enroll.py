@@ -13,13 +13,13 @@ Raises ``EnrollmentFailed`` on permanent failure (missing token, server
 
 from __future__ import annotations
 
-import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 
 from edge.config import Settings
-from edge.control_plane import EdgeControlPlaneError, enroll as cp_enroll
+from edge.control_plane import EdgeControlPlaneError
+from edge.control_plane import enroll as cp_enroll
 from edge.identity import (
     EdgeCredentials,
     load_credentials,
@@ -37,7 +37,7 @@ class EnrollmentFailed(Exception):
 def bootstrap_if_needed(settings: Settings) -> EdgeCredentials:
     """Return usable credentials, enrolling if necessary."""
     existing = load_credentials(settings.state_dir)
-    if existing and existing.cert_valid_to > datetime.now(timezone.utc):
+    if existing and existing.cert_valid_to > datetime.now(UTC):
         log.info(
             "edge.enroll.reuse",
             edge_id=existing.edge_id,

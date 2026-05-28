@@ -13,7 +13,7 @@ Runs as an asyncio task spawned in the FastAPI lifespan:
 from __future__ import annotations
 
 import asyncio
-from typing import Callable
+from collections.abc import Callable
 
 import structlog
 
@@ -21,7 +21,11 @@ from edge.config import Settings
 from edge.control_plane import (
     EdgeControlPlaneError,
     EdgeRevoked,
+)
+from edge.control_plane import (
     heartbeat as cp_heartbeat,
+)
+from edge.control_plane import (
     rotate as cp_rotate,
 )
 from edge.identity import EdgeCredentials, persist_credentials
