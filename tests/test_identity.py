@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import jwt
@@ -14,8 +13,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from edge.identity import (
     CREDENTIAL_FILES,
-    EdgeCredentials,
     ROTATION_TRIGGER_DAYS,
+    EdgeCredentials,
     is_rotation_due,
     load_credentials,
     persist_credentials,
@@ -63,7 +62,7 @@ def test_persist_and_load_roundtrip(tmp_path: Path) -> None:
         cert_pem="cert",
         key_pem="key",
         ca_chain_pem="ca",
-        cert_valid_to=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        cert_valid_to=datetime(2030, 1, 1, tzinfo=UTC),
         agp_endpoint="https://api.trustmodel.ai",
         telemetry_endpoint="https://api.trustmodel.ai/api/v1/edge/telemetry",
     )
@@ -79,7 +78,7 @@ def test_persist_sets_0600_on_private_key(tmp_path: Path) -> None:
         cert_pem="cert",
         key_pem="key",
         ca_chain_pem="ca",
-        cert_valid_to=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        cert_valid_to=datetime(2030, 1, 1, tzinfo=UTC),
         agp_endpoint="https://x",
         telemetry_endpoint="https://x/t",
     )
@@ -114,7 +113,7 @@ def test_is_rotation_due_flips_at_threshold() -> None:
         cert_pem="",
         key_pem="",
         ca_chain_pem="",
-        cert_valid_to=datetime.now(timezone.utc) + timedelta(days=ROTATION_TRIGGER_DAYS + 5),
+        cert_valid_to=datetime.now(UTC) + timedelta(days=ROTATION_TRIGGER_DAYS + 5),
         agp_endpoint="",
         telemetry_endpoint="",
     )
@@ -126,7 +125,7 @@ def test_is_rotation_due_flips_at_threshold() -> None:
         cert_pem="",
         key_pem="",
         ca_chain_pem="",
-        cert_valid_to=datetime.now(timezone.utc) + timedelta(days=ROTATION_TRIGGER_DAYS - 1),
+        cert_valid_to=datetime.now(UTC) + timedelta(days=ROTATION_TRIGGER_DAYS - 1),
         agp_endpoint="",
         telemetry_endpoint="",
     )

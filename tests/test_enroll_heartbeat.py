@@ -5,7 +5,7 @@ Uses httpx's transport mocking so we never hit a real control plane.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -19,8 +19,14 @@ from edge.config import Settings
 from edge.control_plane import (
     EdgeControlPlaneError,
     EdgeRevoked,
+)
+from edge.control_plane import (
     enroll as cp_enroll,
+)
+from edge.control_plane import (
     heartbeat as cp_heartbeat,
+)
+from edge.control_plane import (
     rotate as cp_rotate,
 )
 from edge.enroll import EnrollmentFailed, bootstrap_if_needed
@@ -60,7 +66,7 @@ def _credentials(valid_to_days_from_now: int = 90) -> EdgeCredentials:
         cert_pem="CERT",
         key_pem=_shared_key_pem(),
         ca_chain_pem="CA",
-        cert_valid_to=datetime.now(timezone.utc) + timedelta(days=valid_to_days_from_now),
+        cert_valid_to=datetime.now(UTC) + timedelta(days=valid_to_days_from_now),
         agp_endpoint="https://api.trustmodel.ai",
         telemetry_endpoint="https://api.trustmodel.ai/api/v1/edge/telemetry",
     )
@@ -90,15 +96,19 @@ def test_enroll_happy_path() -> None:
 
 
 def test_enroll_4xx_raises_control_plane_error() -> None:
-    with patch("edge.control_plane.httpx.post", return_value=_mock_post(401)):
-        with pytest.raises(EdgeControlPlaneError):
-            cp_enroll(control_plane_url="http://cp", bootstrap_token="bad", edge_pod_id="p")
+    with (
+        patch("edge.control_plane.httpx.post", return_value=_mock_post(401)),
+        pytest.raises(EdgeControlPlaneError),
+    ):
+        cp_enroll(control_plane_url="http://cp", bootstrap_token="bad", edge_pod_id="p")
 
 
 def test_enroll_network_error_raises_control_plane_error() -> None:
-    with patch("edge.control_plane.httpx.post", side_effect=httpx.ConnectError("down")):
-        with pytest.raises(EdgeControlPlaneError):
-            cp_enroll(control_plane_url="http://cp", bootstrap_token="x", edge_pod_id="p")
+    with (
+        patch("edge.control_plane.httpx.post", side_effect=httpx.ConnectError("down")),
+        pytest.raises(EdgeControlPlaneError),
+    ):
+        cp_enroll(control_plane_url="http://cp", bootstrap_token="x", edge_pod_id="p")
 
 
 # ── control_plane.heartbeat ──────────────────────────────────────────
@@ -115,16 +125,20 @@ def test_heartbeat_returns_typed_response() -> None:
 
 def test_heartbeat_revoked_true_raises_edge_revoked() -> None:
     body = {"revoked": True, "sync_interval_s": 60, "rotation_due": False}
-    with patch("edge.control_plane.httpx.post", return_value=_mock_post(200, body)):
-        with pytest.raises(EdgeRevoked):
-            cp_heartbeat(control_plane_url="http://cp", creds=_credentials())
+    with (
+        patch("edge.control_plane.httpx.post", return_value=_mock_post(200, body)),
+        pytest.raises(EdgeRevoked),
+    ):
+        cp_heartbeat(control_plane_url="http://cp", creds=_credentials())
 
 
 def test_heartbeat_403_raises_edge_revoked() -> None:
     """Revoked Edge → cert-JWT auth fails → 403 → Edge interprets as revocation."""
-    with patch("edge.control_plane.httpx.post", return_value=_mock_post(403)):
-        with pytest.raises(EdgeRevoked):
-            cp_heartbeat(control_plane_url="http://cp", creds=_credentials())
+    with (
+        patch("edge.control_plane.httpx.post", return_value=_mock_post(403)),
+        pytest.raises(EdgeRevoked),
+    ):
+        cp_heartbeat(control_plane_url="http://cp", creds=_credentials())
 
 
 # ── control_plane.rotate ─────────────────────────────────────────────
@@ -166,8 +180,8 @@ def test_bootstrap_if_needed_calls_enroll_when_no_credentials(tmp_path: Path) ->
             cert_pem="C",
             key_pem="K",
             ca_chain_pem="CA",
-            cert_valid_from=datetime.now(timezone.utc),
-            cert_valid_to=datetime.now(timezone.utc) + timedelta(days=90),
+            cert_valid_from=datetime.now(UTC),
+            cert_valid_to=datetime.now(UTC) + timedelta(days=90),
             agp_endpoint="https://x",
             telemetry_endpoint="https://x/t",
         )
@@ -253,9 +267,11 @@ async def test_one_tick_marks_revoked_and_propagates(tmp_path: Path) -> None:
         state_dir=tmp_path / "s",
     )
     state = HeartbeatState(_credentials())
-    with patch("edge.control_plane.httpx.post", return_value=_mock_post(403)):
-        with pytest.raises(EdgeRevoked):
-            await _one_tick(settings, state)
+    with (
+        patch("edge.control_plane.httpx.post", return_value=_mock_post(403)),
+        pytest.raises(EdgeRevoked),
+    ):
+        await _one_tick(settings, state)
     assert state.revoked is True
 
 

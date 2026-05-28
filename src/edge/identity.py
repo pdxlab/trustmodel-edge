@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import jwt
@@ -111,7 +111,7 @@ def load_credentials(state_dir: Path) -> EdgeCredentials | None:
 
 def sign_edge_jwt(edge_id: str, key_pem: str, *, ttl_s: int = 60) -> str:
     """Sign an RS256 JWT the gateway verifies against the matching cert pub key."""
-    now = int(datetime.now(timezone.utc).timestamp())
+    now = int(datetime.now(UTC).timestamp())
     return jwt.encode(
         {"sub": str(edge_id), "iat": now, "exp": now + ttl_s},
         key_pem,
@@ -121,6 +121,6 @@ def sign_edge_jwt(edge_id: str, key_pem: str, *, ttl_s: int = 60) -> str:
 
 def is_rotation_due(creds: EdgeCredentials, *, now: datetime | None = None) -> bool:
     """True when the cert has ≤ ROTATION_TRIGGER_DAYS days left."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     remaining = creds.cert_valid_to - now
     return remaining <= timedelta(days=ROTATION_TRIGGER_DAYS)

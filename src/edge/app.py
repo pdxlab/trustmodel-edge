@@ -146,10 +146,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         revoked_exit = False
         if heartbeat_task is not None:
             heartbeat_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, SystemExit):
                 await heartbeat_task
-            except (asyncio.CancelledError, SystemExit):
-                pass
 
             # Only exit non-zero if we owned the loop (production path).
             # Tests can stick state.heartbeat.revoked=True on the fixture
