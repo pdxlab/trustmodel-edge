@@ -1,0 +1,95 @@
+name: release-branch
+
+# Manually publish a docker image from any branch — for QA / partner-integration
+# testing without bumping a semver release.
+#
+# How to use (operator):
+#   1. Go to the Actions tab on github.com/pdxlab/trustmodel-edge
+#   2. Pick "release-branch" in the left sidebar
+#   3. Click "Run workflow" (top right)
+#   4. Pick the branch you want to build from in the "Use workflow from" dropdown
+#   5. Hit "Run workflow"
+#
+# Result:
+#   ghcr.io/pdxlab/trustmodel-edge:<branch-name>           (rolling tag — moves)
+#   ghcr.io/pdxlab/trustmodel-edge:<branch-name>-<sha7>    (immutable tag — pinned)
+#
+# Distinct from release.yml: this workflow never touches :latest or any
+# :MAJOR.MINOR.PATCH tag, so semver consumers (`helm install ... --version 0.2.0`)
+# never accidentally pick up a branch build.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: pdxlab/trustmodel-edge
+
+jobs:
+  image:
+    name: build + push branch image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute tags
+        id: tags
+        # ref_name carries the branch name when workflow_dispatch runs from a
+        # branch. Sanitize to a docker-safe form: lowercase, slashes → dashes.
+        # The short SHA pins the rolling tag to a specific commit so partners
+        # have an immutable fingerprint to reference.
+        run: |
+          BRANCH_RAW="${GITHUB_REF_NAME}"
+          BRANCH_TAG=$(echo "$BRANCH_RAW" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+          SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
+          echo "branch_tag=${BRANCH_TAG}" >> "$GITHUB_OUTPUT"
+          echo "pinned_tag=${BRANCH_TAG}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Branch: $BRANCH_RAW"
+          echo "Branch tag: $BRANCH_TAG"
+          echo "Pinned tag: ${BRANCH_TAG}-${SHORT_SHA}"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Multi-arch build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.branch_tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.pinned_tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.ref.name=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "## Branch image published"
+            echo ""
+            echo "| Tag | Pull command |"
+            echo "| --- | --- |"
+            echo "| Rolling | \`docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.branch_tag }}\` |"
+            echo "| Pinned  | \`docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.pinned_tag }}\` |"
+            echo ""
+            echo "Built from \`${{ github.ref_name }}\` at \`${{ github.sha }}\`."
+            echo ""
+            echo "**Not published:** \`:latest\` or semver tags — reserved for the release workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
