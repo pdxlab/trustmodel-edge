@@ -25,12 +25,21 @@ spec:
           protocol: TCP
   egress:
     # DNS — required for control-plane name resolution.
-    - to:
-        - namespaceSelector: {}
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
+    #
+    # Allow port 53 to any destination instead of pinning to a specific
+    # pod selector. DNS topologies vary across K8s distros:
+    #
+    #   * CoreDNS / kube-dns in kube-system on most clusters
+    #   * NodeLocal DNSCache via link-local 169.254.20.10 on GKE Autopilot
+    #     and any cluster with the NodeLocal DNSCache addon enabled
+    #   * Custom resolvers (e.g., upstream-only) in air-gapped environments
+    #
+    # Pinning to ``k8s-app: kube-dns`` (the prior version) broke DNS on
+    # GKE Autopilot because the actual resolver pod is labelled
+    # ``k8s-app: node-local-dns``. Restricting DNS egress by destination
+    # gives minimal security benefit — the high-value restriction is the
+    # RFC1918 exclusion on the :443 egress rule below.
+    - ports:
         - port: 53
           protocol: UDP
         - port: 53
