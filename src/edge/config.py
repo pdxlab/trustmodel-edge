@@ -107,6 +107,17 @@ class Settings(BaseSettings):
         description="HTTP timeout for /api/v1/edge/policy/current calls",
     )
 
+    # ── OAuth (TRUS-1270) ───────────────────────────────────────────────
+    # TTL for JWTs minted at POST /v1/oauth/token. 1h matches aurora-gateway's
+    # default; agents re-request on expiry. Configurable down to 1 min for
+    # tests / aggressive rotation, up to 24h for low-churn deployments.
+    oauth_token_ttl_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="TTL for agent JWTs minted by Edge at /v1/oauth/token",
+    )
+
     # ─── Observability ───────────────────────────────────────────────
     log_level: str = Field(
         default="INFO",
