@@ -192,6 +192,12 @@ def create_app(
     app.include_router(decide.router, prefix="/v1")
     app.include_router(enroll.router, prefix="/v1")
     app.include_router(oauth.router, prefix="/v1")
+    # TRUS-1270 Phase 4 — also mount the OAuth router under /mcp so the
+    # token endpoint is reachable at ``/mcp/oauth/token``. This matches
+    # aurora-gateway's URL convention and the path the published Python
+    # SDK (trustmodel.oauth.OAuthClientCredentials) hardcodes, so
+    # customers can point ``base_url`` at Edge without a custom token_path.
+    app.include_router(oauth.router, prefix="/mcp")
     app.include_router(telemetry.router, prefix="/v1")
 
     return app
