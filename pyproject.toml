@@ -29,6 +29,10 @@ dependencies = [
   # TRUS-989 telemetry). pyjwt[crypto] pulls in `cryptography` so the
   # RS256 backend is available without a separate dep.
   "pyjwt[crypto]>=2.9,<3.0",
+  # OAuth token endpoint (TRUS-1270) accepts application/x-www-form-urlencoded
+  # bodies per RFC 6749 § 4.4. FastAPI's Form() dependency requires this
+  # parser. Lightweight — pure-Python, no transitive deps.
+  "python-multipart>=0.0.9,<1.0",
   # Prometheus exposition for /metrics (TRUS-988)
   "prometheus-client>=0.20,<1.0",
   # zstd compression for outbound telemetry batches (TRUS-989). Wire format:
