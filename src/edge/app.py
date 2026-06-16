@@ -36,7 +36,7 @@ from edge.policy.cache import get_cache, reset_cache
 from edge.policy.client import PolicyClient
 from edge.policy.sync import run_forever as policy_run_forever
 from edge.policy.sync import warm as policy_warm
-from edge.routes import decide, enroll, health, metrics, telemetry
+from edge.routes import decide, enroll, health, metrics, oauth, telemetry
 from edge.telemetry import flush_now as telemetry_flush_now
 from edge.telemetry import get_store as get_telemetry_store
 from edge.telemetry import reset_store as reset_telemetry_store
@@ -106,9 +106,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.policy_sync_task = sync_task
 
     # ── Telemetry queue + sender (TRUS-989) ────────────────────────────
-    store = get_telemetry_store(
-        state_dir=cfg.state_dir, max_size=cfg.telemetry_queue_size
-    )
+    store = get_telemetry_store(state_dir=cfg.state_dir, max_size=cfg.telemetry_queue_size)
     sender = TelemetrySender(
         store,
         control_plane_url=str(cfg.control_plane_url),
@@ -193,6 +191,7 @@ def create_app(
     app.include_router(metrics.router)
     app.include_router(decide.router, prefix="/v1")
     app.include_router(enroll.router, prefix="/v1")
+    app.include_router(oauth.router, prefix="/v1")
     app.include_router(telemetry.router, prefix="/v1")
 
     return app

@@ -34,7 +34,7 @@ from edge.config import Settings
 from edge.heartbeat import HeartbeatState
 from edge.identity import EdgeCredentials
 from edge.policy import cache as cache_mod
-from edge.policy.bundle import EdgePolicy, Policy, PolicyRule
+from edge.policy.bundle import AuthorizedClient, EdgePolicy, Policy, PolicyRule
 from edge.telemetry import store as telemetry_store_mod
 
 
@@ -136,7 +136,7 @@ def ready_client(
         yield c
 
 
-def _demo_edge_policy() -> EdgePolicy:
+def _demo_edge_policy(*, authorized_clients: list[AuthorizedClient] | None = None) -> EdgePolicy:
     return EdgePolicy(
         id="pol-demo-1",
         tenant_id="test-tenant",
@@ -173,30 +173,86 @@ def _demo_edge_policy() -> EdgePolicy:
         ),
         is_active=True,
         created_at=datetime.now(UTC),
+        authorized_clients=authorized_clients or [],
     )
 
 
 @pytest.fixture
 def warm_client(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[TestClient]:
-    """TestClient with a pre-seeded policy cache."""
+) -> Iterator[tuple[TestClient, dict[str, str]]]:
+    """TestClient with a pre-seeded policy cache + a valid Bearer header.
+
+    Returns ``(client, auth_headers)``. TRUS-1270 made the /decide
+    endpoint OAuth-authenticated; existing tests that hit /decide must
+    pass ``**auth_headers`` so requests carry a token Edge can verify.
+
+    The fixture provisions:
+      * an RSA private key at ``<state_dir>/key.pem`` (Edge would normally
+        get this via enrollment — we generate one ephemerally for the test)
+      * one AuthorizedClient bundled in the seeded EdgePolicy
+      * a freshly-minted Bearer token for that client
+    """
     _stub_lifespan_network(monkeypatch)
 
-    # Seed cache before lifespan kicks in. _reset_singletons already
-    # cleared it. The cache singleton survives lifespan start/stop in
-    # this test scope, but app.shutdown also calls reset_cache. To
-    # keep the cache populated through the lifespan, also stub out
-    # reset_cache so app.shutdown doesn't blow it away.
+    # Keep the seeded cache through lifespan shutdown.
     monkeypatch.setattr("edge.app.reset_cache", lambda: None)
+
+    # RSA key on disk so /oauth/token + /decide can sign/verify locally.
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    private_pem, public_pem = _make_test_rsa_keypair()
+    (settings.state_dir / "key.pem").write_text(private_pem, encoding="utf-8")
+
+    # Seed cache with one AuthorizedClient so /decide can resolve the
+    # token's sub when verifying.
+    test_client_id = "test-client-id"
+    ac = AuthorizedClient(
+        client_id=test_client_id,
+        client_name="test/agent",
+        client_secret_hash="pbkdf2_sha256$1$x$x",  # unused — we mint the token directly
+        allowed_scopes=["govern:enforce"],
+        agent_id="test-agent-slug",
+    )
 
     import asyncio
 
     cache = cache_mod.get_cache()
     asyncio.new_event_loop().run_until_complete(
-        cache.replace(_demo_edge_policy(), state_dir=settings.state_dir)
+        cache.replace(_demo_edge_policy(authorized_clients=[ac]), state_dir=settings.state_dir)
     )
+
+    # Mint a bearer token directly with the on-disk key. Same code path
+    # as /v1/oauth/token would produce.
+    from edge.oauth import mint_agent_token
+
+    token, _ = mint_agent_token(
+        client_id=test_client_id,
+        agent_id="test-agent-slug",
+        granted_scopes=["govern:enforce"],
+        ttl_seconds=3600,
+        private_key_pem=private_pem,
+        issuer="edge:test-tenant",
+    )
+    auth_headers = {"Authorization": f"Bearer {token}"}
 
     app = create_app(settings, skip_enrollment=True)
     with TestClient(app) as c:
-        yield c
+        yield c, auth_headers
+
+
+def _make_test_rsa_keypair() -> tuple[str, bytes]:
+    """Local helper — generates an ephemeral RSA-2048 keypair (PEM)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+    public_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return private_pem, public_pem
