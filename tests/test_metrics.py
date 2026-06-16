@@ -17,11 +17,16 @@ def test_metrics_exposes_prometheus_text(client: TestClient) -> None:
     assert "edge_policy_cache_age_seconds" in body
 
 
-def test_metrics_increments_on_decide(warm_client: TestClient) -> None:
+def test_metrics_increments_on_decide(warm_client) -> None:
     # Hit decide a few times, then scrape metrics; expect counters > 0.
+    client, auth = warm_client
     for _ in range(3):
-        warm_client.post("/v1/decide", json={"tool": "search.query", "args": {}})
-    metrics = warm_client.get("/metrics").text
+        client.post(
+            "/v1/decide",
+            json={"tool": "search.query", "args": {}},
+            headers=auth,
+        )
+    metrics = client.get("/metrics").text
     assert 'edge_decisions_total{verdict="allow"}' in metrics
     # Histogram observations should be present
     assert "edge_decision_latency_ms_count" in metrics

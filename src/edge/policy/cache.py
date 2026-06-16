@@ -56,6 +56,16 @@ class PolicyCache:
         snap = self._snapshot
         return snap.compiled if snap else None
 
+    def authorized_clients(self) -> list:
+        """Return the OAuthClient list shipped with the current policy snapshot.
+
+        Empty list when no snapshot yet (cold cache). Items are
+        ``edge.policy.bundle.AuthorizedClient`` — kept as a forward-ref to
+        avoid a circular import at module load.
+        """
+        snap = self._snapshot
+        return list(snap.edge_policy.authorized_clients) if snap else []
+
     async def replace(self, edge_policy: EdgePolicy, *, state_dir: Path | None = None) -> None:
         """Compile + swap + persist.
 

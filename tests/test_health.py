@@ -57,10 +57,13 @@ def test_health_ready_after_enrollment_and_cache_warm_returns_200(
     assert body["edge_id"] == "00000000-0000-0000-0000-000000000001"
 
 
-def test_health_ready_warm_only_returns_200(warm_client: TestClient) -> None:
+def test_health_ready_warm_only_returns_200(warm_client) -> None:
     """warm_client uses skip_enrollment=True (so enrollment_complete=True) and
-    pre-seeds the cache → /health/ready 200 even without a heartbeat attached."""
-    response = warm_client.get("/health/ready")
+    pre-seeds the cache → /health/ready 200 even without a heartbeat attached.
+    Fixture returns ``(client, auth_headers)`` post-TRUS-1270; health doesn't
+    need the auth header but we still unpack the tuple."""
+    client, _ = warm_client
+    response = client.get("/health/ready")
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ready"

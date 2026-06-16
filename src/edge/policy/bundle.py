@@ -37,6 +37,22 @@ class Policy(BaseModel):
     framework_tags: list[str] = Field(default_factory=list)
 
 
+class AuthorizedClient(BaseModel):
+    """One OAuthClient that may present ``client_credentials`` at this Edge.
+
+    Pushed down by aurora-gateway in the policy-sync payload (TRUS-1270).
+    Edge uses ``client_secret_hash`` to verify the secret presented at
+    ``POST /oauth/token`` — fully offline, no round-trip on the mint path.
+    The hash is Django's PBKDF2 (``pbkdf2_sha256$<iter>$<salt>$<hash>``).
+    """
+
+    client_id: str
+    client_name: str = ""
+    client_secret_hash: str
+    allowed_scopes: list[str] = Field(default_factory=list)
+    agent_id: str | None = None
+
+
 class EdgePolicy(BaseModel):
     """Top-level wrapper returned by ``GET /api/v1/edge/policy/current``.
 
@@ -50,3 +66,4 @@ class EdgePolicy(BaseModel):
     bundle: Policy
     is_active: bool
     created_at: datetime
+    authorized_clients: list[AuthorizedClient] = Field(default_factory=list)
