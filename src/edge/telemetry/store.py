@@ -37,6 +37,19 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+# Marker substrings SQLite uses when it can't open a file it once wrote.
+# Seen in the wild on GCSFuse + WAL when concurrent writes race the -shm
+# index (XSpan 2026-07-22): the primary DB file itself becomes unreadable
+# and every subsequent open raises DatabaseError before we can execute
+# the DDL. We rotate the file aside on this signature and try once more
+# with a fresh DB.
+_CORRUPTION_MARKERS = (
+    "database disk image is malformed",
+    "file is not a database",
+    "database is locked",  # can indicate a broken -wal handoff on FUSE
+)
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,8 +86,65 @@ class TelemetryStore:
         self._lock = threading.Lock()
         self._dropped = 0
         db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._open_or_recreate()
+
+    def _open_or_recreate(self) -> None:
+        """Run the DDL once. If SQLite reports the file as corrupt, rotate
+        it aside and retry with a fresh DB.
+
+        The queue is a durable buffer, not a source of truth — losing
+        the on-disk backlog to recover from corruption is acceptable and
+        much better than crashing the whole sidecar (XSpan RCA
+        2026-07-22: corrupt telemetry.db blocked every new Cloud Run
+        instance across the fleet).
+        """
+        try:
+            with self._conn() as conn:
+                conn.executescript(_DDL)
+            return
+        except sqlite3.DatabaseError as exc:
+            msg = str(exc).lower()
+            if not any(m in msg for m in _CORRUPTION_MARKERS):
+                raise
+            self._rotate_corrupt_files(reason=str(exc))
+
+        # One retry against the freshly-empty path. If this fails we let
+        # the exception propagate; get_store() catches it and installs a
+        # NoopTelemetryStore instead, keeping the sidecar alive.
         with self._conn() as conn:
             conn.executescript(_DDL)
+
+    def _rotate_corrupt_files(self, *, reason: str) -> None:
+        """Move telemetry.db + telemetry.db-wal + telemetry.db-shm aside
+        so a subsequent open builds a fresh DB. Kept on disk (renamed
+        with a timestamp suffix) for post-mortem, not deleted."""
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        for suffix in ("", "-wal", "-shm"):
+            src = self._path.with_name(self._path.name + suffix)
+            if not src.exists():
+                continue
+            dst = src.with_name(f"{src.name}.corrupt-{stamp}")
+            try:
+                src.rename(dst)
+                logger.warning(
+                    "edge.telemetry.rotated_corrupt_db",
+                    extra={"src": str(src), "dst": str(dst), "reason": reason},
+                )
+            except OSError as rot_exc:
+                # If we can't rename (permissions, FS quirks), try to
+                # unlink so the next open doesn't hit the same corruption.
+                # Preserve the rename attempt as context in the log.
+                try:
+                    src.unlink()
+                    logger.warning(
+                        "edge.telemetry.deleted_corrupt_db",
+                        extra={"src": str(src), "rename_error": str(rot_exc)},
+                    )
+                except OSError:
+                    logger.exception(
+                        "edge.telemetry.corrupt_db_cleanup_failed",
+                        extra={"src": str(src)},
+                    )
 
     @contextmanager
     def _conn(self):
@@ -155,15 +225,69 @@ class TelemetryStore:
             )
 
 
-_store_singleton: TelemetryStore | None = None
+class NoopTelemetryStore:
+    """Drop-in stand-in used when the real store can't be constructed.
+
+    Governance and enforcement (``/decide``) do NOT depend on telemetry
+    landing in the queue. When the on-disk store fails (corrupt DB,
+    unwritable state dir, FS quirk), the sidecar must keep serving
+    requests — we just lose audit events for the affected instance
+    until the deployer redeploys onto healthier storage or the
+    long-term event pipeline (TRUS-1073) is available.
+
+    Every method here matches the public surface of ``TelemetryStore``
+    and returns benign values so callers (``decide()``, ``TelemetrySender``)
+    can't tell the difference at runtime.
+    """
+
+    def __init__(self) -> None:
+        self._dropped = 0
+
+    def count(self) -> int:
+        return 0
+
+    @property
+    def dropped_count(self) -> int:
+        return self._dropped
+
+    def enqueue(self, payload: dict[str, Any]) -> bool:  # noqa: ARG002
+        # Silently drop, but count it so operators can see we're in
+        # degraded mode via the /metrics endpoint.
+        self._dropped += 1
+        return True
+
+    def dequeue_batch(self, *, limit: int) -> list[QueuedEvent]:  # noqa: ARG002
+        return []
+
+    def ack(self, ids: list[int]) -> None:  # noqa: ARG002
+        return None
+
+    def mark_retry(self, ids: list[int], *, error: str) -> None:  # noqa: ARG002
+        return None
 
 
-def get_store(*, state_dir: Path | None = None, max_size: int | None = None) -> TelemetryStore:
+# Any code that used to import `TelemetryStore` for type hints should
+# accept either flavour. New code should prefer `AnyTelemetryStore`.
+AnyTelemetryStore = TelemetryStore | NoopTelemetryStore
+
+
+_store_singleton: AnyTelemetryStore | None = None
+
+
+def get_store(
+    *, state_dir: Path | None = None, max_size: int | None = None
+) -> AnyTelemetryStore:
     """Process-wide store. First call must pass ``state_dir`` + ``max_size``.
 
     Lifespan calls this with the resolved settings; subsequent callers
     (the producer in ``decide()``, the sender worker, tests) get the
     same instance back.
+
+    If the real ``TelemetryStore`` cannot be constructed (corrupt DB
+    that can't be recovered, unwritable state dir, disk full), we log
+    prominently and install a ``NoopTelemetryStore`` in its place. The
+    sidecar continues to serve ``/decide`` — governance/enforcement
+    does not depend on telemetry (TRUS-1073, XSpan RCA 2026-07-22).
     """
     global _store_singleton
     if _store_singleton is None:
@@ -172,7 +296,14 @@ def get_store(*, state_dir: Path | None = None, max_size: int | None = None) -> 
                 "TelemetryStore not initialised. Lifespan must call "
                 "get_store(state_dir=..., max_size=...) once at startup."
             )
-        _store_singleton = TelemetryStore(state_dir / _DB_FILENAME, max_size=max_size)
+        try:
+            _store_singleton = TelemetryStore(state_dir / _DB_FILENAME, max_size=max_size)
+        except Exception:  # noqa: BLE001 - any failure must degrade, not crash
+            logger.exception(
+                "edge.telemetry.store_init_failed_degrading_to_noop",
+                extra={"state_dir": str(state_dir)},
+            )
+            _store_singleton = NoopTelemetryStore()
     return _store_singleton
 
 
