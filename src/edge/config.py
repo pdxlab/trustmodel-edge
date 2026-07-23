@@ -55,6 +55,19 @@ class Settings(BaseSettings):
         default=Path("/var/lib/trustmodel"),
         description="Root of persistent state: mTLS cert, policy cache, telemetry queue",
     )
+    telemetry_dir: Path | None = Field(
+        default=None,
+        description=(
+            "Optional override for where telemetry.db lives. Defaults to "
+            "state_dir. Point this at a local ephemeral path (e.g. /tmp) "
+            "when state_dir is backed by network storage (GCSFuse, EFS, "
+            "Azure Files) — decide() latency is dominated by the "
+            "synchronous SQLite write, and network storage adds "
+            "hundreds of ms per write. Trade-off: telemetry.db is lost "
+            "on pod restart (in-flight audit events dropped); cert/"
+            "policy cache still persist on state_dir. XSpan RCA 2026-07-23."
+        ),
+    )
 
     # ─── Telemetry (TRUS-989) ────────────────────────────────────────
     telemetry_queue_size: int = Field(
