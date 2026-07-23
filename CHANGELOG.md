@@ -6,6 +6,40 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 once it reaches 1.0.0. Pre-1.0 releases may introduce breaking changes on minor bumps.
 
+## [0.4.1] — 2026-07-22
+
+### Fixed — telemetry-store init must not crash the sidecar
+
+- **`TelemetryStore` now auto-recovers from a corrupt `telemetry.db`.**
+  On the `database disk image is malformed` / `file is not a database` /
+  `database is locked` markers, the store rotates the offending
+  `telemetry.db`, `telemetry.db-wal`, `telemetry.db-shm` files aside
+  (renamed with a `.corrupt-<timestamp>` suffix, preserved for
+  post-mortem) and retries once with a fresh DB. See
+  `src/edge/telemetry/store.py::TelemetryStore._open_or_recreate`.
+- **`get_store()` degrades to a `NoopTelemetryStore` if the real store
+  cannot be constructed** (unrecoverable corruption, unwritable state
+  dir, transient disk I/O errors that outlast one retry). The sidecar
+  lifespan continues; `/decide` keeps enforcing policy; audit events
+  for the affected instance are dropped and counted via
+  `dropped_count` so operators can see the degraded mode on `/metrics`.
+
+### Context
+
+Root cause was reported by XSpan on 2026-07-22 (RCA doc). A ~100-req
+burst against a governed agent drove concurrent writes to
+`telemetry.db` on a GCSFuse-mounted shared bucket; WAL's `-shm` +
+locking assumptions don't hold on FUSE, so the DB corrupted. Every
+subsequent container start opened the same corrupt file in the shared
+bucket, propagated the exception out of the ASGI lifespan, and exited
+before binding port 8080 — blocking the customer's deploy pipeline and
+autoscale fleet-wide.
+
+Governance/enforcement never depended on telemetry landing; treating
+`get_store()` as fatal was the actual bug. This release makes the
+storage failure a warning, not a crash. Long-term event-pipeline
+replacement (Azure Service Bus + Event Hubs) is tracked in TRUS-1073.
+
 ## [0.4.0] — 2026-06-16
 
 ### Added — TRUS-1270 (Edge OAuth)

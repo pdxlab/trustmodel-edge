@@ -21,10 +21,18 @@ mid-POST leaves rows queued, next start sends them.
 
 from edge.telemetry.payload import AuditEvent, build_audit_event
 from edge.telemetry.sender import TelemetrySender, flush_now
-from edge.telemetry.store import TelemetryStore, get_store, reset_store
+from edge.telemetry.store import (
+    AnyTelemetryStore,
+    NoopTelemetryStore,
+    TelemetryStore,
+    get_store,
+    reset_store,
+)
 
 __all__ = [
+    "AnyTelemetryStore",
     "AuditEvent",
+    "NoopTelemetryStore",
     "TelemetrySender",
     "TelemetryStore",
     "build_audit_event",
