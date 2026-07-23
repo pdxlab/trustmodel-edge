@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +268,7 @@ class NoopTelemetryStore:
 
 # Any code that used to import `TelemetryStore` for type hints should
 # accept either flavour. New code should prefer `AnyTelemetryStore`.
-AnyTelemetryStore = Union[TelemetryStore, NoopTelemetryStore]
+AnyTelemetryStore = TelemetryStore | NoopTelemetryStore
 
 
 _store_singleton: AnyTelemetryStore | None = None
