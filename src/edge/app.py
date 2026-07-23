@@ -106,7 +106,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.policy_sync_task = sync_task
 
     # ── Telemetry queue + sender (TRUS-989) ────────────────────────────
-    store = get_telemetry_store(state_dir=cfg.state_dir, max_size=cfg.telemetry_queue_size)
+    # v0.4.2: telemetry_dir defaults to state_dir; customer can override
+    # to a local ephemeral path (e.g. /tmp) when state_dir is network
+    # storage — sync SQLite write latency dominates decide() on FUSE.
+    store = get_telemetry_store(
+        state_dir=cfg.state_dir,
+        max_size=cfg.telemetry_queue_size,
+        telemetry_dir=cfg.telemetry_dir,
+    )
     sender = TelemetrySender(
         store,
         control_plane_url=str(cfg.control_plane_url),
