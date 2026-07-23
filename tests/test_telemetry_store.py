@@ -186,6 +186,67 @@ def test_corrupt_db_recovery_only_triggers_on_corruption_markers(
     assert rotated == []
 
 
+# ─────────────────────────────────────────────────────────────────────
+# v0.4.2 — telemetry_dir override (XSpan RCA 2026-07-23).
+# Lets customers move telemetry.db off network-backed state_dir onto
+# fast local storage without moving the cert.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_telemetry_dir_override_lands_db_off_state_dir(tmp_path: Path) -> None:
+    """When ``telemetry_dir`` is set, ``telemetry.db`` is created there —
+    NOT on ``state_dir``. Cert/policy on state_dir stay untouched."""
+    reset_store()
+    state = tmp_path / "state"
+    state.mkdir()
+    tele = tmp_path / "fast-ephemeral"
+    tele.mkdir()
+
+    try:
+        store = get_store(state_dir=state, max_size=100, telemetry_dir=tele)
+    finally:
+        pass  # keep singleton for the enqueue check below
+
+    assert isinstance(store, TelemetryStore)
+    assert store.enqueue({"hello": "world"}) is True
+
+    # DB landed in the override dir, not the state dir
+    assert (tele / "telemetry.db").exists()
+    assert not (state / "telemetry.db").exists()
+
+    reset_store()
+
+
+def test_telemetry_dir_none_falls_back_to_state_dir(tmp_path: Path) -> None:
+    """Backward-compat: ``telemetry_dir=None`` (or omitted) keeps the
+    pre-v0.4.2 behaviour — DB co-located with cert on state_dir."""
+    reset_store()
+    state = tmp_path / "state"
+    state.mkdir()
+
+    try:
+        store = get_store(state_dir=state, max_size=100, telemetry_dir=None)
+        assert isinstance(store, TelemetryStore)
+        assert (state / "telemetry.db").exists()
+    finally:
+        reset_store()
+
+
+def test_telemetry_dir_omitted_kwarg_is_backward_compat(tmp_path: Path) -> None:
+    """Callers that predate v0.4.2 don't pass ``telemetry_dir`` at all —
+    the kwarg-less call must still work."""
+    reset_store()
+    state = tmp_path / "state"
+    state.mkdir()
+
+    try:
+        store = get_store(state_dir=state, max_size=100)
+        assert isinstance(store, TelemetryStore)
+        assert (state / "telemetry.db").exists()
+    finally:
+        reset_store()
+
+
 @pytest.mark.parametrize("unrecoverable_error", ["disk I/O error"])
 def test_get_store_wraps_unrecoverable_error_in_noop(
     tmp_path: Path, unrecoverable_error: str, monkeypatch: pytest.MonkeyPatch

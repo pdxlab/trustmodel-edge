@@ -6,6 +6,43 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 once it reaches 1.0.0. Pre-1.0 releases may introduce breaking changes on minor bumps.
 
+## [0.4.2] — 2026-07-23
+
+### Added — `EDGE_TELEMETRY_DIR` config for split state/telemetry storage
+
+- **New setting `telemetry_dir`** (env var `EDGE_TELEMETRY_DIR`) — optional
+  path override for where `telemetry.db` lives. Defaults to `state_dir`
+  (backward-compatible with pre-v0.4.2 deployments; no action needed
+  from customers on local-disk-only setups).
+
+### When to use it
+
+If `state_dir` is backed by **network storage** (GCSFuse, EFS, Azure
+Files, NFS, etc.), every `POST /v1/decide` incurs a synchronous SQLite
+INSERT to `telemetry.db` in that folder. Network storage adds 100-500ms
+per write, which blows through tight decide budgets (voice paths that
+cap decide at 500ms — XSpan RCA 2026-07-23). Point `EDGE_TELEMETRY_DIR`
+at a local ephemeral path (e.g. `/tmp/edge-telemetry`) to keep the audit
+queue on local disk. Cert + policy cache stay on `state_dir`.
+
+### Trade-off
+
+`telemetry.db` at an ephemeral path is lost on pod restart — in-flight
+audit events (not yet POSTed to aurora) are dropped. Acceptable for
+most cases: losing a few audit events at restart is much better than
+blocking live requests. Long-term architecture (TRUS-1073, Azure
+Service Bus + Event Hubs) replaces the local queue entirely.
+
+### Example — XSpan Cloud Run
+
+```yaml
+env:
+  - name: EDGE_STATE_DIR
+    value: /mnt/edge-state           # GCSFuse-mounted bucket (as before)
+  - name: EDGE_TELEMETRY_DIR
+    value: /tmp/edge-telemetry       # local ephemeral, fast
+```
+
 ## [0.4.1] — 2026-07-22
 
 ### Fixed — telemetry-store init must not crash the sidecar

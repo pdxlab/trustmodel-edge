@@ -275,13 +275,24 @@ _store_singleton: AnyTelemetryStore | None = None
 
 
 def get_store(
-    *, state_dir: Path | None = None, max_size: int | None = None
+    *,
+    state_dir: Path | None = None,
+    max_size: int | None = None,
+    telemetry_dir: Path | None = None,
 ) -> AnyTelemetryStore:
     """Process-wide store. First call must pass ``state_dir`` + ``max_size``.
 
     Lifespan calls this with the resolved settings; subsequent callers
     (the producer in ``decide()``, the sender worker, tests) get the
     same instance back.
+
+    ``telemetry_dir`` is an optional override for where ``telemetry.db``
+    lives. When set, the queue file goes there; when unset, it stays on
+    ``state_dir`` (backward-compatible with pre-v0.4.2 deployments).
+    Use this when ``state_dir`` is on network storage (GCSFuse etc.) and
+    the sync write latency is blowing the decide budget (XSpan RCA
+    2026-07-23, voice path > 500 ms). Cert + policy still live on
+    ``state_dir``; only the audit queue relocates.
 
     If the real ``TelemetryStore`` cannot be constructed (corrupt DB
     that can't be recovered, unwritable state dir, disk full), we log
@@ -296,12 +307,13 @@ def get_store(
                 "TelemetryStore not initialised. Lifespan must call "
                 "get_store(state_dir=..., max_size=...) once at startup."
             )
+        db_dir = telemetry_dir if telemetry_dir is not None else state_dir
         try:
-            _store_singleton = TelemetryStore(state_dir / _DB_FILENAME, max_size=max_size)
+            _store_singleton = TelemetryStore(db_dir / _DB_FILENAME, max_size=max_size)
         except Exception:  # noqa: BLE001 - any failure must degrade, not crash
             logger.exception(
                 "edge.telemetry.store_init_failed_degrading_to_noop",
-                extra={"state_dir": str(state_dir)},
+                extra={"state_dir": str(state_dir), "telemetry_dir": str(db_dir)},
             )
             _store_singleton = NoopTelemetryStore()
     return _store_singleton
