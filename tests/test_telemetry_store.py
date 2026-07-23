@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -103,6 +104,15 @@ def test_corrupt_db_is_rotated_and_recreated_on_init(tmp_path: Path) -> None:
     assert len(rotated) == 1, f"expected one rotated file, saw: {rotated}"
 
 
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="chmod bits don't gate writes on Windows the same way",
+)
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root bypasses chmod-based write restrictions; the write "
+    "would succeed and the fallback path wouldn't be exercised",
+)
 def test_get_store_falls_back_to_noop_when_state_dir_unwritable(
     tmp_path: Path,
 ) -> None:
