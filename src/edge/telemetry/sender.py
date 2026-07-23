@@ -30,7 +30,7 @@ import httpx
 import zstandard as zstd
 
 from edge.policy.jwt import mint_cert_jwt
-from edge.telemetry.store import TelemetryStore
+from edge.telemetry.store import AnyTelemetryStore
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class TelemetrySender:
 
     def __init__(
         self,
-        store: TelemetryStore,
+        store: AnyTelemetryStore,
         *,
         control_plane_url: str,
         state_dir: Path,
