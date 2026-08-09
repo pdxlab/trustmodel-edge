@@ -18,22 +18,31 @@ Tracking: [TRUS-984](https://predixtions.atlassian.net/browse/TRUS-984)
 (EPIC) · [TRUS-986](https://predixtions.atlassian.net/browse/TRUS-986)
 (this scaffold).
 
-## Status — v0.1.0 scaffold
+## Status — v0.4.2
 
-| Surface | Status | Implementing ticket |
+The routes below are **implemented and covered by the CI test suite** (`ci.yml` →
+`pytest -q` on Python 3.12, green on `main`; 17 test modules incl.
+`test_decide`, `test_policy_sync`, `test_telemetry_*`).
+
+| Surface | Status | Ticket |
 |---|---|---|
-| Helm chart + container | shipped (this repo) | TRUS-986 |
-| `GET /health/live`, `/health/ready` | shipped | TRUS-986 |
-| `POST /v1/decide` | **501 stub** | TRUS-988 |
-| `POST /v1/enroll-callback` | **501 stub** | TRUS-987 |
-| `POST /v1/telemetry-flush` | **501 stub** | TRUS-989 |
-| Outbound-only enrollment + bootstrap token | not yet | TRUS-987 |
-| Policy cache + offline-tolerant decide | not yet | TRUS-988 |
-| On-disk telemetry queue + outbound sync | not yet | TRUS-989 |
+| Helm chart + container | implemented · tested | TRUS-986 |
+| `GET /health/live`, `/health/ready` | implemented · tested | TRUS-986 |
+| Outbound-only enrollment + bootstrap token (pod-start handshake) | implemented · tested | TRUS-987 |
+| `POST /v1/oauth/token` — agent JWT mint | implemented · tested | TRUS-1270 |
+| `POST /v1/decide` — policy-cached, offline-tolerant, OAuth-gated | implemented · tested | TRUS-988 / TRUS-1270 |
+| Policy cache + sync (3-loop runtime) | implemented · tested | TRUS-988 |
+| On-disk telemetry queue + outbound sender | implemented · tested | TRUS-989 |
+| `POST /v1/telemetry-flush` — synchronous drain | implemented · tested | TRUS-989 |
+| `POST /v1/enroll-callback` — manual re-enroll hook | implemented · tested | TRUS-987 / TRUS-1659 |
 
-The chart is installable today. Decide / enroll / telemetry return 501 with
-a payload pointing at the implementing ticket — downstream callers can
-detect "not-yet-implemented" deterministically.
+> **Version note:** install/upgrade to the current chart (`--version 0.4.2`).
+> **`v0.1.0` is the pre-implementation scaffold** — its `/v1/decide` and
+> `/v1/telemetry-flush` return **501**. Anything still on v0.1.0 must be upgraded.
+>
+> **Before a customer in-VPC rollout,** run an in-cluster smoke (enroll → policy
+> sync → `/v1/decide` → telemetry drain) against the real control plane — CI
+> covers the units, not a live control-plane round-trip.
 
 ## Quickstart on kind (5 min)
 
