@@ -15,8 +15,6 @@ Covers:
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-
 
 def test_decide_routes_to_known_policy_name(multi_warm_client) -> None:
     """Sending ``policy_name='deny-email'`` routes through that policy
