@@ -65,5 +65,9 @@ class EdgePolicy(BaseModel):
     version: str
     bundle: Policy
     is_active: bool
+    # TRUS-1716 — designates the tenant's default policy. Populated by
+    # aurora-gateway's response; defaults to False so older-Aurora
+    # servers that don't ship the field round-trip cleanly.
+    is_primary: bool = False
     created_at: datetime
     authorized_clients: list[AuthorizedClient] = Field(default_factory=list)

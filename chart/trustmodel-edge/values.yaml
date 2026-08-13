@@ -57,6 +57,19 @@ logLevel: INFO          # DEBUG | INFO | WARNING | ERROR
 telemetry:
   queueSize: 10000      # max in-memory events before back-pressure
 
+# ─── Multi-policy routing (TRUS-1716) ────────────────────────────────
+# Enable per-name policy routing via ``policy_name`` on /v1/decide.
+# OFF (default) → sync fetches the singular ``policy/current`` endpoint;
+# /v1/decide ignores any ``policy_name`` on the request and evaluates
+# against the tenant's primary policy — byte-identical to pre-0.5.0
+# behaviour.
+# ON → sync fetches the plural ``policies/active`` endpoint (falls back
+# to singular if the control plane is pre-1716); /v1/decide honours
+# ``policy_name`` and routes to the named policy in the cache.
+# Flip to true tenant-by-tenant after validating the new routing on a
+# canary pod. Removed in Phase 1c once every tenant has migrated.
+multiPolicyEnabled: false
+
 # ─── Persistence (mTLS cert + policy cache + telemetry queue) ───────
 persistence:
   enabled: true

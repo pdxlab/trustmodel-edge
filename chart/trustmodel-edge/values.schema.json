@@ -56,6 +56,10 @@
         "queueSize": { "type": "integer", "minimum": 100, "maximum": 1000000 }
       }
     },
+    "multiPolicyEnabled": {
+      "type": "boolean",
+      "description": "TRUS-1716 — enable per-name policy routing via ``policy_name`` on /v1/decide. Off (default) preserves pre-0.5.0 singular-policy behaviour."
+    },
     "persistence": {
       "type": "object",
       "properties": {

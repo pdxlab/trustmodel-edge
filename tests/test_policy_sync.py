@@ -106,3 +106,119 @@ async def test_warm_tolerates_failure_when_disk_cache_present(tmp_path: Path) ->
     # Should not raise — fresh_cache is already warm via disk.
     await warm(_client(_down_handler, tmp_path), fresh_cache, state_dir=tmp_path)
     assert fresh_cache.is_warm
+
+
+# ---------------------------------------------------------------------- #
+# TRUS-1716 — multi-policy sync path.
+# ---------------------------------------------------------------------- #
+
+
+def _plural_payload() -> dict:
+    def _one(name: str, *, is_primary: bool) -> dict:
+        return {
+            "id": f"pol-{name}",
+            "tenant_id": "test-tenant",
+            "name": name,
+            "version": "1.0.0",
+            "bundle": {
+                "name": name,
+                "version": "1.0.0",
+                "description": "",
+                "rules": [
+                    {"rule_id": f"r-{name}", "when": {"tool": "*"}, "then": "allow", "priority": 999}
+                ],
+                "framework_tags": [],
+            },
+            "is_active": True,
+            "is_primary": is_primary,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+
+    return {
+        "policies": [_one("alpha", is_primary=True), _one("beta", is_primary=False)],
+        "authorized_clients": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_multi_sync_once_populates_named_snapshots(tmp_path: Path) -> None:
+    """With ``multi_policy_enabled=True``, sync_once fetches the plural
+    endpoint and populates a per-name dict cache."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/policies/active/")
+        return httpx.Response(200, json=_plural_payload())
+
+    cache = PolicyCache()
+    ok = await sync_once(
+        _client(handler, tmp_path),
+        cache,
+        state_dir=tmp_path,
+        multi_policy_enabled=True,
+    )
+    assert ok is True
+    assert set(cache.all_names()) == {"alpha", "beta"}
+    assert cache.primary_name() == "alpha"
+    # New manifest layout written to disk.
+    assert (tmp_path / "manifest.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_multi_sync_once_falls_back_to_singular_on_plural_404(
+    tmp_path: Path,
+) -> None:
+    """Aurora is pre-1716: the plural endpoint 404s. Client falls back
+    to the singular endpoint; sync_once still populates the cache."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/policies/active/"):
+            return httpx.Response(404, json={"error": "not_found"})
+        return httpx.Response(200, json=_payload())
+
+    cache = PolicyCache()
+    ok = await sync_once(
+        _client(handler, tmp_path),
+        cache,
+        state_dir=tmp_path,
+        multi_policy_enabled=True,
+    )
+    assert ok is True
+    assert cache.all_names() == ["demo"]
+    assert cache.primary_name() == "demo"
+
+
+@pytest.mark.asyncio
+async def test_multi_sync_once_both_endpoints_404_returns_false(tmp_path: Path) -> None:
+    """Tenant has no active policy at all — both endpoints 404. Sync
+    returns False, cache stays cold."""
+
+    cache = PolicyCache()
+    ok = await sync_once(
+        _client(_404_handler, tmp_path),
+        cache,
+        state_dir=tmp_path,
+        multi_policy_enabled=True,
+    )
+    assert ok is False
+    assert cache.is_warm is False
+
+
+@pytest.mark.asyncio
+async def test_singular_sync_still_default_when_flag_off(tmp_path: Path) -> None:
+    """The default rollout state (``multi_policy_enabled=False``)
+    behaves byte-identical to pre-1716: hits the singular endpoint,
+    ignores the plural, writes ``policy.json``."""
+    urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        urls.append(request.url.path)
+        return httpx.Response(200, json=_payload())
+
+    cache = PolicyCache()
+    ok = await sync_once(_client(handler, tmp_path), cache, state_dir=tmp_path)
+    assert ok is True
+    # Only the singular endpoint gets hit.
+    assert urls == ["/api/v1/edge/policy/current/"]
+    # Legacy on-disk layout preserved.
+    assert (tmp_path / "policy.json").exists()
+    assert not (tmp_path / "manifest.json").exists()

@@ -17,6 +17,7 @@ scope set.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -25,7 +26,12 @@ from pydantic import BaseModel, Field
 
 from edge.config import Settings
 from edge.engine import EvaluationInput, EvaluationResult, evaluate
-from edge.metrics import cache_hits_total, decision_latency_ms, decisions_total
+from edge.metrics import (
+    cache_hits_total,
+    decision_latency_ms,
+    decisions_total,
+    policy_not_found_total,
+)
 from edge.oauth import (
     AgentTokenClaims,
     EnrollmentMissing,
@@ -38,6 +44,8 @@ from edge.policy.cache import get_cache
 from edge.policy.stale import fail_mode_verdict
 from edge.policy.stale import status as stale_status
 from edge.telemetry import build_audit_event, get_store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["decide"])
 
@@ -108,6 +116,13 @@ class DecideRequest(BaseModel):
     # retained for backward compatibility — used only when the token
     # itself doesn't carry an agent_id claim.
     agent_id: str | None = None
+    # TRUS-1716 — SDK ≥3.4.1 sends this to target a specific policy in
+    # the tenant's multi-policy set. Omitted → route to the tenant's
+    # primary (backward-compat: pre-1716 callers hit the singular
+    # primary policy). Only honored when
+    # ``EDGE_MULTI_POLICY_ENABLED=true``; ignored otherwise so the
+    # gradual rollout doesn't break pre-1716 Edge pods.
+    policy_name: str | None = None
 
 
 class DecideResponse(BaseModel):
@@ -134,7 +149,40 @@ async def decide(
 
     cfg: Settings = request.app.state.settings
     cache = get_cache()
-    compiled = cache.compiled()
+
+    # TRUS-1716 — route by ``policy_name`` when multi-policy is enabled.
+    # When the flag is off (default rollout state) we ignore
+    # ``body.policy_name`` and always evaluate the primary snapshot —
+    # byte-identical to pre-1716 behavior. The two branches are kept
+    # explicitly separate so Phase 1c removal is a clean grep-and-delete.
+    if cfg.multi_policy_enabled and body.policy_name:
+        compiled = cache.compiled_by_name(body.policy_name)
+        if compiled is None:
+            # Counter is deliberately unlabeled (Priyanka #12 review) —
+            # caller-controlled ``policy_name`` on the miss path would
+            # blow up label cardinality. The specific name goes into
+            # the log for debug.
+            policy_not_found_total.inc()
+            logger.warning(
+                "edge.decide.policy_not_found",
+                extra={
+                    "policy_name": body.policy_name,
+                    "available": cache.all_names(),
+                    "tenant_id": cfg.tenant_id,
+                },
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": (
+                        f"policy_name={body.policy_name!r} not found in Edge cache"
+                    ),
+                    "code": "policy_not_found",
+                    "available": cache.all_names(),
+                },
+            )
+    else:
+        compiled = cache.compiled()
 
     if compiled is None:
         # No policy at all yet — surface this as 503 unless explicitly

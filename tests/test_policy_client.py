@@ -101,3 +101,137 @@ async def test_fetch_malformed_body_raises_policy_fetch_error(tmp_path: Path) ->
 
     with pytest.raises(PolicyFetchError):
         await _client(handler, tmp_path).fetch()
+
+
+# ---------------------------------------------------------------------- #
+# TRUS-1716 — plural endpoint + singular fallback.
+# ---------------------------------------------------------------------- #
+
+
+def _policy_dict(name: str, *, is_primary: bool = False) -> dict:
+    return {
+        "id": f"pol-{name}",
+        "tenant_id": "test-tenant",
+        "name": name,
+        "version": "1.0.0",
+        "bundle": {
+            "name": name,
+            "version": "1.0.0",
+            "description": "",
+            "rules": [
+                {
+                    "rule_id": f"r-{name}",
+                    "when": {"tool": "*"},
+                    "then": "allow",
+                    "framework_tags": [],
+                    "priority": 999,
+                }
+            ],
+            "framework_tags": [],
+        },
+        "is_active": True,
+        "is_primary": is_primary,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_happy_path_hits_plural_endpoint(tmp_path: Path) -> None:
+    """Plural endpoint returns list + hoisted authorized_clients."""
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "policies": [
+                    _policy_dict("alpha", is_primary=True),
+                    _policy_dict("beta"),
+                ],
+                "authorized_clients": [
+                    {
+                        "client_id": "cid-1",
+                        "client_name": "one",
+                        "client_secret_hash": "pbkdf2$1$x$x",
+                        "allowed_scopes": ["govern:enforce"],
+                    }
+                ],
+            },
+        )
+
+    policies, primary_name, clients = await _client(handler, tmp_path).fetch_all()
+
+    assert captured["url"] == "http://aurora.test/api/v1/edge/policies/active/"
+    assert [p.bundle.name for p in policies] == ["alpha", "beta"]
+    assert primary_name == "alpha"
+    assert len(clients) == 1
+    assert clients[0].client_id == "cid-1"
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_no_primary_returns_none(tmp_path: Path) -> None:
+    """No policy in the payload has ``is_primary=True`` → primary_name is None."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "policies": [_policy_dict("alpha"), _policy_dict("beta")],
+                "authorized_clients": [],
+            },
+        )
+
+    policies, primary_name, clients = await _client(handler, tmp_path).fetch_all()
+
+    assert len(policies) == 2
+    assert primary_name is None
+    assert clients == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_falls_back_to_singular_on_404(tmp_path: Path) -> None:
+    """Aurora hasn't shipped the plural endpoint yet — 404 on the plural
+    path triggers a fallback to the singular endpoint. The returned
+    policy is treated as the tenant's primary."""
+    urls_hit: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        urls_hit.append(request.url.path)
+        if request.url.path.endswith("/policies/active/"):
+            return httpx.Response(404, json={"error": "not_found"})
+        return httpx.Response(200, json=_policy_dict("solo", is_primary=False))
+
+    policies, primary_name, clients = await _client(handler, tmp_path).fetch_all()
+
+    # Both endpoints hit (plural first, then singular fallback).
+    assert urls_hit[0].endswith("/policies/active/")
+    assert urls_hit[1].endswith("/policy/current/")
+    # Fallback treats the sole policy as primary regardless of ``is_primary``
+    # on the singular payload — pre-1716 Aurora doesn't ship the field.
+    assert len(policies) == 1
+    assert policies[0].bundle.name == "solo"
+    assert primary_name == "solo"
+    assert clients == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_singular_fallback_still_404_raises(tmp_path: Path) -> None:
+    """Both endpoints 404 → tenant genuinely has no active policy;
+    propagate the singular's PolicyNotFound to the sync loop."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "not_found"})
+
+    with pytest.raises(PolicyNotFound):
+        await _client(handler, tmp_path).fetch_all()
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_malformed_body_raises_policy_fetch_error(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        # Missing "policies" key.
+        return httpx.Response(200, json={"authorized_clients": []})
+
+    with pytest.raises(PolicyFetchError):
+        await _client(handler, tmp_path).fetch_all()
