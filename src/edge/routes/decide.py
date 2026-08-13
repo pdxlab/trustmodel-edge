@@ -17,6 +17,7 @@ scope set.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -43,6 +44,8 @@ from edge.policy.cache import get_cache
 from edge.policy.stale import fail_mode_verdict
 from edge.policy.stale import status as stale_status
 from edge.telemetry import build_audit_event, get_store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["decide"])
 
@@ -155,7 +158,19 @@ async def decide(
     if cfg.multi_policy_enabled and body.policy_name:
         compiled = cache.compiled_by_name(body.policy_name)
         if compiled is None:
-            policy_not_found_total.labels(policy_name=body.policy_name).inc()
+            # Counter is deliberately unlabeled (Priyanka #12 review) —
+            # caller-controlled ``policy_name`` on the miss path would
+            # blow up label cardinality. The specific name goes into
+            # the log for debug.
+            policy_not_found_total.inc()
+            logger.warning(
+                "edge.decide.policy_not_found",
+                extra={
+                    "policy_name": body.policy_name,
+                    "available": cache.all_names(),
+                    "tenant_id": cfg.tenant_id,
+                },
+            )
             raise HTTPException(
                 status_code=400,
                 detail={

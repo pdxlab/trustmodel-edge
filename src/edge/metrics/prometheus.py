@@ -47,9 +47,15 @@ cache_age_seconds = Gauge(
 # isn't in the Edge cache (either the caller sent an unknown name or a
 # just-published policy hasn't synced yet). Rollout monitor for Deploy 3:
 # any non-zero sustained rate → investigate.
+#
+# Deliberately UNLABELED (Priyanka #12 review, 2026-08-13): the caller
+# controls ``policy_name`` on the miss path, so exposing it as a Prom
+# label would let a buggy/hostile caller spray random values and mint
+# a new time series per value — metric-registry memory blowup on the
+# hot decide path. The specific ``policy_name`` still goes to the WARN
+# log for debug; the metric is aggregate-only.
 policy_not_found_total = Counter(
     "edge_decisions_policy_not_found_total",
     "Count of /v1/decide calls that hit the policy_name lookup miss branch.",
-    labelnames=("policy_name",),
     registry=registry,
 )

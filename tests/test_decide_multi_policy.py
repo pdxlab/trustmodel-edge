@@ -15,6 +15,8 @@ Covers:
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_decide_routes_to_known_policy_name(multi_warm_client) -> None:
     """Sending ``policy_name='deny-email'`` routes through that policy
@@ -77,23 +79,50 @@ def test_decide_unknown_policy_name_increments_not_found_counter(
     multi_warm_client,
 ) -> None:
     """The 400 branch bumps ``edge_decisions_policy_not_found_total`` —
-    Deploy 3 monitor window watches this for any non-zero sustained rate."""
+    Deploy 3 monitor window watches this for any non-zero sustained rate.
+
+    Counter is UNLABELED (Priyanka #12 review): the caller-controlled
+    ``policy_name`` value only goes into the WARN log, never into a
+    Prometheus label — otherwise a caller spraying random names would
+    mint one time series per name on the hot decide path.
+    """
     client, auth = multi_warm_client
     from edge.metrics import policy_not_found_total
 
-    # Baseline via the internal counter value accessor; labelset is
-    # per-call, so use the same label as the request we'll make.
-    baseline = policy_not_found_total.labels(policy_name="mystery")._value.get()
+    baseline = policy_not_found_total._value.get()
 
-    response = client.post(
+    # Two misses with DIFFERENT policy_name values — the counter should
+    # add 2 regardless of the names since it's unlabeled.
+    r1 = client.post(
         "/v1/decide",
-        json={"tool": "search.query", "policy_name": "mystery"},
+        json={"tool": "search.query", "policy_name": "mystery-1"},
         headers=auth,
     )
-    assert response.status_code == 400
+    r2 = client.post(
+        "/v1/decide",
+        json={"tool": "search.query", "policy_name": "mystery-2"},
+        headers=auth,
+    )
+    assert r1.status_code == 400
+    assert r2.status_code == 400
 
-    after = policy_not_found_total.labels(policy_name="mystery")._value.get()
-    assert after - baseline == 1.0
+    after = policy_not_found_total._value.get()
+    assert after - baseline == 2.0
+
+
+def test_policy_not_found_counter_has_no_policy_name_label(
+    multi_warm_client,
+) -> None:
+    """Regression pin for TRUS-1716 (Priyanka #12 review): the counter
+    must NOT expose ``policy_name`` as a label. A future refactor that
+    accidentally re-adds the label would explode cardinality; this test
+    catches that at PR-review time."""
+    from edge.metrics import policy_not_found_total
+
+    # ``.labels(...)`` on an unlabeled Counter raises. If someone
+    # re-introduces the label, this test fails loudly.
+    with pytest.raises(ValueError):
+        policy_not_found_total.labels(policy_name="anything")
 
 
 def test_decide_ignores_policy_name_when_flag_off(warm_client) -> None:
