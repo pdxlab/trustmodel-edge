@@ -120,6 +120,21 @@ class Settings(BaseSettings):
         description="HTTP timeout for /api/v1/edge/policy/current calls",
     )
 
+    # ─── Multi-policy (TRUS-1716) ────────────────────────────────────
+    # Rollout knob for the "one active policy per (tenant, name)" world.
+    # OFF (default) → Edge fetches the singular ``policy/current``
+    # endpoint and ignores any ``policy_name`` field on /v1/decide
+    # (byte-identical to pre-1716 behavior).
+    # ON → Edge fetches the plural ``policies/active`` endpoint, caches
+    # per-name snapshots, and routes /v1/decide by the caller's
+    # ``policy_name`` (falling back to the tenant's primary when omitted).
+    # Turn on tenant-by-tenant via Helm ``EDGE_MULTI_POLICY_ENABLED=true``.
+    # Removed in Phase 1c once every tenant has migrated.
+    multi_policy_enabled: bool = Field(
+        default=False,
+        description="Enable TRUS-1716 multi-policy per (tenant, name) mode.",
+    )
+
     # ── OAuth (TRUS-1270) ───────────────────────────────────────────────
     # TTL for JWTs minted at POST /v1/oauth/token. 1h matches aurora-gateway's
     # default; agents re-request on expiry. Configurable down to 1 min for

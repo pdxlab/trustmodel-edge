@@ -64,10 +64,24 @@ def _stub_lifespan_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from edge import app as app_mod
 
-    async def _warm_stub(_client, _cache, *, state_dir, require_success=False):
+    async def _warm_stub(
+        _client,
+        _cache,
+        *,
+        state_dir,
+        require_success=False,
+        multi_policy_enabled=False,
+    ):
         return None
 
-    async def _run_forever_stub(_client, _cache, *, state_dir, interval_seconds):
+    async def _run_forever_stub(
+        _client,
+        _cache,
+        *,
+        state_dir,
+        interval_seconds,
+        multi_policy_enabled=False,
+    ):
         # Block forever; the lifespan cancels us on shutdown.
         await asyncio.Event().wait()
 
@@ -223,6 +237,101 @@ def warm_client(
 
     # Mint a bearer token directly with the on-disk key. Same code path
     # as /v1/oauth/token would produce.
+    from edge.oauth import mint_agent_token
+
+    token, _ = mint_agent_token(
+        client_id=test_client_id,
+        agent_id="test-agent-slug",
+        granted_scopes=["govern:enforce"],
+        ttl_seconds=3600,
+        private_key_pem=private_pem,
+        issuer="edge:test-tenant",
+    )
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    app = create_app(settings, skip_enrollment=True)
+    with TestClient(app) as c:
+        yield c, auth_headers
+
+
+@pytest.fixture
+def multi_warm_client(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[TestClient, dict[str, str]]]:
+    """TRUS-1716 — TestClient with a multi-policy cache pre-seeded via
+    ``PolicyCache.replace_all``. Enables ``multi_policy_enabled=True`` on
+    settings so /v1/decide honors ``policy_name`` routing.
+
+    Seeds three named policies:
+      * ``primary-policy``  — is_primary=True; allow-all
+      * ``deny-email``      — deny on ``email.send``, allow otherwise
+      * ``block-search``    — deny on ``search.query``, allow otherwise
+    """
+    _stub_lifespan_network(monkeypatch)
+    monkeypatch.setattr("edge.app.reset_cache", lambda: None)
+
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    private_pem, _public_pem = _make_test_rsa_keypair()
+    (settings.state_dir / "key.pem").write_text(private_pem, encoding="utf-8")
+
+    # Flip multi-policy ON via the settings override.
+    settings.multi_policy_enabled = True
+
+    test_client_id = "test-multi-client-id"
+    ac = AuthorizedClient(
+        client_id=test_client_id,
+        client_name="test/agent",
+        client_secret_hash="pbkdf2_sha256$1$x$x",
+        allowed_scopes=["govern:enforce"],
+        agent_id="test-agent-slug",
+    )
+
+    def _policy(name: str, rules: list[PolicyRule], *, is_primary: bool) -> EdgePolicy:
+        return EdgePolicy(
+            id=f"pol-{name}",
+            tenant_id="test-tenant",
+            name=name,
+            version="1.0.0",
+            bundle=Policy(name=name, version="1.0.0", description="", rules=rules),
+            is_active=True,
+            is_primary=is_primary,
+            created_at=datetime.now(UTC),
+            authorized_clients=[ac],
+        )
+
+    policies = [
+        _policy(
+            "primary-policy",
+            [PolicyRule(rule_id="allow-all", when={"tool": "*"}, then="allow", priority=999)],
+            is_primary=True,
+        ),
+        _policy(
+            "deny-email",
+            [
+                PolicyRule(rule_id="block-email", when={"tool": "email.send"}, then="deny", priority=10),
+                PolicyRule(rule_id="fallback-allow", when={"tool": "*"}, then="allow", priority=999),
+            ],
+            is_primary=False,
+        ),
+        _policy(
+            "block-search",
+            [
+                PolicyRule(rule_id="block-search", when={"tool": "search.query"}, then="deny", priority=10),
+                PolicyRule(rule_id="fallback-allow", when={"tool": "*"}, then="allow", priority=999),
+            ],
+            is_primary=False,
+        ),
+    ]
+
+    import asyncio
+
+    cache = cache_mod.get_cache()
+    asyncio.new_event_loop().run_until_complete(
+        cache.replace_all(
+            policies, primary_name="primary-policy", state_dir=settings.state_dir
+        )
+    )
+
     from edge.oauth import mint_agent_token
 
     token, _ = mint_agent_token(

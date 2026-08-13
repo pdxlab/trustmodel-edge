@@ -7,6 +7,20 @@
 
 Failures log and return ``False``; the previous snapshot keeps serving.
 Stale-policy detection runs separately (see :mod:`edge.policy.stale`).
+
+**TRUS-1716 flag-gated split:**
+
+``EDGE_MULTI_POLICY_ENABLED=false`` (default) → :func:`sync_once` calls
+the legacy singular endpoint via ``client.fetch()`` and pushes into the
+cache via ``cache.replace()``. Byte-identical to pre-1716.
+
+``EDGE_MULTI_POLICY_ENABLED=true`` → calls ``client.fetch_all()`` and
+pushes via ``cache.replace_all(policies, primary_name=...)`` — a
+per-name dict + explicit primary designation.
+
+The two branches are deliberately kept as two ``if/else`` blocks (not
+polymorphism) so the Phase 1c removal is a clean grep-and-delete once
+every tenant has migrated.
 """
 
 from __future__ import annotations
@@ -21,11 +35,25 @@ from edge.policy.client import PolicyClient, PolicyFetchError, PolicyNotFound
 logger = logging.getLogger(__name__)
 
 
-async def sync_once(client: PolicyClient, cache: PolicyCache, *, state_dir: Path) -> bool:
+async def sync_once(
+    client: PolicyClient,
+    cache: PolicyCache,
+    *,
+    state_dir: Path,
+    multi_policy_enabled: bool = False,
+) -> bool:
     """One fetch+swap cycle. Never raises.
 
     Returns True on success, False otherwise.
     """
+    if multi_policy_enabled:
+        return await _sync_once_multi(client, cache, state_dir=state_dir)
+    return await _sync_once_singular(client, cache, state_dir=state_dir)
+
+
+async def _sync_once_singular(
+    client: PolicyClient, cache: PolicyCache, *, state_dir: Path
+) -> bool:
     try:
         edge_policy = await client.fetch()
     except PolicyNotFound as exc:
@@ -52,12 +80,44 @@ async def sync_once(client: PolicyClient, cache: PolicyCache, *, state_dir: Path
     return True
 
 
+async def _sync_once_multi(
+    client: PolicyClient, cache: PolicyCache, *, state_dir: Path
+) -> bool:
+    try:
+        policies, primary_name, _clients = await client.fetch_all()
+    except PolicyNotFound as exc:
+        logger.info("edge.sync.no_active_policies", extra={"detail": str(exc)})
+        return False
+    except PolicyFetchError as exc:
+        logger.warning("edge.sync.failed", extra={"detail": str(exc)})
+        return False
+
+    try:
+        await cache.replace_all(
+            policies, primary_name=primary_name, state_dir=state_dir
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("edge.sync.cache_replace_all_failed")
+        return False
+
+    logger.info(
+        "edge.sync.ok_multi",
+        extra={
+            "count": len(policies),
+            "primary_name": primary_name,
+            "names": [p.bundle.name for p in policies],
+        },
+    )
+    return True
+
+
 async def warm(
     client: PolicyClient,
     cache: PolicyCache,
     *,
     state_dir: Path,
     require_success: bool = False,
+    multi_policy_enabled: bool = False,
 ) -> None:
     """First sync, blocking startup.
 
@@ -65,7 +125,9 @@ async def warm(
     readiness probe never flips. Otherwise, a failed warm is acceptable
     as long as the disk cache has data — the periodic loop will retry.
     """
-    ok = await sync_once(client, cache, state_dir=state_dir)
+    ok = await sync_once(
+        client, cache, state_dir=state_dir, multi_policy_enabled=multi_policy_enabled
+    )
     if ok:
         return
     if require_success or not cache.is_warm:
@@ -84,6 +146,7 @@ async def run_forever(
     *,
     state_dir: Path,
     interval_seconds: int,
+    multi_policy_enabled: bool = False,
 ) -> None:
     """Refresh loop. Cancelled by the lifespan on shutdown."""
     while True:
@@ -91,4 +154,9 @@ async def run_forever(
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
             raise
-        await sync_once(client, cache, state_dir=state_dir)
+        await sync_once(
+            client,
+            cache,
+            state_dir=state_dir,
+            multi_policy_enabled=multi_policy_enabled,
+        )

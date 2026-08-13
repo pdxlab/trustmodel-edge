@@ -42,3 +42,14 @@ cache_age_seconds = Gauge(
     "Age of the currently-served in-memory snapshot.",
     registry=registry,
 )
+
+# TRUS-1716 — increments when a /v1/decide call names a policy that
+# isn't in the Edge cache (either the caller sent an unknown name or a
+# just-published policy hasn't synced yet). Rollout monitor for Deploy 3:
+# any non-zero sustained rate → investigate.
+policy_not_found_total = Counter(
+    "edge_decisions_policy_not_found_total",
+    "Count of /v1/decide calls that hit the policy_name lookup miss branch.",
+    labelnames=("policy_name",),
+    registry=registry,
+)

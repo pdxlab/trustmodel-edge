@@ -88,7 +88,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the readiness probe to stay red — caller can choose to require
     # success. Today, allow disk-fallback to satisfy warm.
     try:
-        await policy_warm(policy_client, cache, state_dir=cfg.state_dir)
+        await policy_warm(
+            policy_client,
+            cache,
+            state_dir=cfg.state_dir,
+            multi_policy_enabled=cfg.multi_policy_enabled,
+        )
         app.state.policy_warm_ok = True
     except RuntimeError as exc:
         log.error("edge.policy.warm_failed", detail=str(exc))
@@ -100,6 +105,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             cache,
             state_dir=cfg.state_dir,
             interval_seconds=cfg.policy_sync_interval_seconds,
+            multi_policy_enabled=cfg.multi_policy_enabled,
         ),
         name="edge.policy.sync",
     )

@@ -16,6 +16,7 @@ from edge.metrics.prometheus import (
     cache_hits_total,
     decision_latency_ms,
     decisions_total,
+    policy_not_found_total,
     registry,
     stale_seconds,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "cache_hits_total",
     "decision_latency_ms",
     "decisions_total",
+    "policy_not_found_total",
     "registry",
     "stale_seconds",
 ]
