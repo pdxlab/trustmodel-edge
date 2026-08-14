@@ -56,6 +56,12 @@ logLevel: INFO          # DEBUG | INFO | WARNING | ERROR
 # ─── Telemetry buffer ────────────────────────────────────────────────
 telemetry:
   queueSize: 10000      # max in-memory events before back-pressure
+  # TRUS-1725 — for PHI / PCI / GDPR tenants where the raw ``args`` (e.g.
+  # patient-facing model output) must not leave the pod. When true, the
+  # forwarded audit event carries ``action_payload={}``; verdict / rule_id /
+  # reason / redactions still populate from the in-pod evaluation. OFF
+  # (default) preserves pre-1725 wire behaviour.
+  omitPayload: false
 
 # ─── Multi-policy routing (TRUS-1716) ────────────────────────────────
 # Enable per-name policy routing via ``policy_name`` on /v1/decide.
