@@ -9,6 +9,8 @@ data:
   EDGE_CONTROL_PLANE_URL: {{ .Values.controlPlaneUrl | quote }}
   EDGE_LOG_LEVEL: {{ .Values.logLevel | quote }}
   EDGE_TELEMETRY_QUEUE_SIZE: {{ .Values.telemetry.queueSize | quote }}
+  # TRUS-1725 — PHI/PCI/GDPR payload-omission toggle; see values.yaml docstring.
+  EDGE_TELEMETRY_OMIT_PAYLOAD: {{ .Values.telemetry.omitPayload | default false | quote }}
   # TRUS-1716 — multi-policy routing feature flag; see values.yaml docstring.
   EDGE_MULTI_POLICY_ENABLED: {{ .Values.multiPolicyEnabled | quote }}
   EDGE_BOOTSTRAP_TOKEN_PATH: "/etc/trustmodel/bootstrap-token"

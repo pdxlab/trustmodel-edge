@@ -237,6 +237,13 @@ async def decide(
     # Enqueue audit event for outbound shipping (TRUS-989). Best-effort:
     # back-pressure / disk-full can drop the row, but the decision has
     # already been returned to the caller. Counter for ops visibility.
+    #
+    # TRUS-1725 — when ``telemetry_omit_payload`` is on (PHI/PCI/GDPR
+    # tenants), forward the audit event with an empty ``action_payload``.
+    # Rule matching already ran against ``body.args`` above, so verdict/
+    # rule_id/reason/redactions stay correct; only the outbound copy of
+    # the raw payload is dropped.
+    forwarded_args = {} if cfg.telemetry_omit_payload else body.args
     audit = build_audit_event(
         tenant_id=cfg.tenant_id,
         agent_id=agent_id,
@@ -246,7 +253,7 @@ async def decide(
         rule_id=result.rule_id,
         reason=result.reason,
         tool=body.tool,
-        args=body.args,
+        args=forwarded_args,
         redactions=result.redactions,
         framework_tags=result.matched_framework_tags,
         latency_ms=result.latency_ms,

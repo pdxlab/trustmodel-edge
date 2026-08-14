@@ -53,7 +53,11 @@
     "telemetry": {
       "type": "object",
       "properties": {
-        "queueSize": { "type": "integer", "minimum": 100, "maximum": 1000000 }
+        "queueSize": { "type": "integer", "minimum": 100, "maximum": 1000000 },
+        "omitPayload": {
+          "type": "boolean",
+          "description": "TRUS-1725 — emit audit events with an empty action_payload. Set true for PHI/PCI/GDPR tenants where the raw args must not leave the pod. Evaluation runs against the real args in-pod."
+        }
       }
     },
     "multiPolicyEnabled": {

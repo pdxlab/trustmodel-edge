@@ -152,6 +152,23 @@ class Settings(BaseSettings):
         description="Python log level: DEBUG / INFO / WARNING / ERROR",
     )
 
+    # ─── Telemetry payload mode (TRUS-1725) ──────────────────────────
+    # For PHI / PCI / GDPR tenants where the raw ``args`` (e.g. patient-
+    # facing model output) must never leave the Edge pod. When true, the
+    # decide route forwards the audit event with ``action_payload={}``;
+    # rule matching still runs against the real args in-pod so
+    # ``verdict / rule_id / reason / redactions`` stay accurate. Default
+    # OFF preserves pre-1725 wire behaviour.
+    telemetry_omit_payload: bool = Field(
+        default=False,
+        description=(
+            "Emit audit events with an empty action_payload. Set true for "
+            "tenants under PHI/PCI/GDPR where the raw args must not leave "
+            "the pod. Evaluation runs against the real args in-pod; only "
+            "the telemetry-forwarded copy is emptied."
+        ),
+    )
+
     # ─── HTTP server ─────────────────────────────────────────────────
     host: str = Field(default="0.0.0.0")  # noqa: S104 - container binds all
     port: int = Field(default=8080, ge=1, le=65535)
