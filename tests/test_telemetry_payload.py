@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from edge.telemetry.payload import _TENANT_NAMESPACE, build_audit_event
+from edge.telemetry.payload import _TENANT_NAMESPACE, build_audit_event, hash_subject
 
 
 def test_build_audit_event_populates_required_fields() -> None:
@@ -83,3 +83,49 @@ def test_optional_fields_default_to_empty_string() -> None:
     )
     assert event.agent_id == ""
     assert event.subject_id == ""
+
+
+# ── hash_subject (TRUS-2002) ────────────────────────────────────────────
+
+
+def test_hash_subject_is_deterministic() -> None:
+    """Same subject + key must always produce the same pseudonym, or
+    downstream per-subject recourse lookups couldn't correlate events."""
+    h1 = hash_subject("customer-42@example.com", "k1")
+    h2 = hash_subject("customer-42@example.com", "k1")
+    assert h1 == h2
+    assert h1 != ""
+
+
+def test_hash_subject_differs_by_key() -> None:
+    """A different key must produce a different pseudonym — otherwise the
+    key isn't doing anything and this degrades to an unkeyed hash."""
+    h1 = hash_subject("customer-42@example.com", "k1")
+    h2 = hash_subject("customer-42@example.com", "k2")
+    assert h1 != h2
+
+
+def test_hash_subject_never_leaks_the_raw_value() -> None:
+    subject = "very-guessable-email@example.com"
+    digest = hash_subject(subject, "some-key")
+    assert subject not in digest
+
+
+def test_hash_subject_is_not_a_bare_unkeyed_hash() -> None:
+    """Regression guard for the actual vulnerability this exists to avoid:
+    an attacker with a candidate list (e.g. known customer emails) and a
+    bare hash could just hash each candidate and match. Asserting the
+    output differs from plain SHA-256 of the subject pins the design to
+    "keyed", not just "some hash was applied"."""
+    import hashlib
+
+    subject = "customer-42@example.com"
+    assert hash_subject(subject, "some-key") != hashlib.sha256(
+        subject.encode("utf-8")
+    ).hexdigest()
+
+
+def test_hash_subject_empty_subject_or_key_returns_empty_string() -> None:
+    assert hash_subject(None, "some-key") == ""
+    assert hash_subject("", "some-key") == ""
+    assert hash_subject("customer-42", "") == ""
