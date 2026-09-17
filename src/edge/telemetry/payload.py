@@ -9,6 +9,8 @@ gateway-side schema changes — same plugin posture as the policy fetch.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -35,6 +37,24 @@ class AuditEvent:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def hash_subject(subject: str | None, key: str) -> str:
+    """Deterministic, keyed pseudonym for a subject identifier (TRUS-2002).
+
+    Same subject always maps to the same pseudonym, so a downstream
+    per-subject recourse lookup still correlates events to the same person
+    without the raw identifier ever leaving the pod. Keyed (HMAC-SHA256, not
+    a bare hash) because subject spaces are often low-entropy and
+    enumerable — an unkeyed hash of a guessable identifier is a
+    dictionary-attack surface, not anonymization.
+
+    Returns "" when either input is empty — callers treat that the same as
+    "no subject on this decision", never as "hash of an empty string".
+    """
+    if not subject or not key:
+        return ""
+    return hmac.new(key.encode("utf-8"), subject.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def build_audit_event(

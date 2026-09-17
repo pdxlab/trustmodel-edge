@@ -19,7 +19,7 @@ Pod restart replays in-flight rows (SQLite persists). Pod crash
 mid-POST leaves rows queued, next start sends them.
 """
 
-from edge.telemetry.payload import AuditEvent, build_audit_event
+from edge.telemetry.payload import AuditEvent, build_audit_event, hash_subject
 from edge.telemetry.sender import TelemetrySender, flush_now
 from edge.telemetry.store import (
     AnyTelemetryStore,
@@ -38,5 +38,6 @@ __all__ = [
     "build_audit_event",
     "flush_now",
     "get_store",
+    "hash_subject",
     "reset_store",
 ]

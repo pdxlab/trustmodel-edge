@@ -43,7 +43,7 @@ from edge.oauth import (
 from edge.policy.cache import get_cache
 from edge.policy.stale import fail_mode_verdict
 from edge.policy.stale import status as stale_status
-from edge.telemetry import build_audit_event, get_store
+from edge.telemetry import build_audit_event, get_store, hash_subject
 
 logger = logging.getLogger(__name__)
 
@@ -244,10 +244,19 @@ async def decide(
     # rule_id/reason/redactions stay correct; only the outbound copy of
     # the raw payload is dropped.
     forwarded_args = {} if cfg.telemetry_omit_payload else body.args
+    # TRUS-2002 — action_payload alone wasn't enough: subject_id (who the
+    # decision was about) still left the pod unredacted. Settings validation
+    # guarantees telemetry_subject_hash_key is set whenever this flag is on,
+    # so the pseudonym is always available here.
+    forwarded_subject = (
+        hash_subject(body.subject, cfg.telemetry_subject_hash_key)
+        if cfg.telemetry_omit_payload
+        else body.subject
+    )
     audit = build_audit_event(
         tenant_id=cfg.tenant_id,
         agent_id=agent_id,
-        subject=body.subject,
+        subject=forwarded_subject,
         policy_id=compiled.policy_id,
         verdict=result.verdict,
         rule_id=result.rule_id,

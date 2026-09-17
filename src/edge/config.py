@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, HttpUrl
+from pydantic import Field, HttpUrl, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -168,6 +168,32 @@ class Settings(BaseSettings):
             "the telemetry-forwarded copy is emptied."
         ),
     )
+    # TRUS-2002 — TRUS-1725 only stripped action_payload; subject_id (the
+    # identifier of the person the decision was about) still left the pod
+    # unredacted even with telemetry_omit_payload on. For a regulated
+    # customer that's frequently the most sensitive field in the record.
+    # HMAC (not a bare hash) because subject spaces are often low-entropy
+    # and enumerable — emails, usernames, sequential customer IDs — so an
+    # unkeyed hash is a dictionary-attack surface, not real anonymization.
+    telemetry_subject_hash_key: str = Field(
+        default="",
+        description=(
+            "HMAC key used to pseudonymize subject_id in outbound telemetry "
+            "when telemetry_omit_payload is on. Required whenever "
+            "telemetry_omit_payload=true — see the validator below."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_subject_hash_key_when_omitting_payload(self) -> Settings:
+        if self.telemetry_omit_payload and not self.telemetry_subject_hash_key:
+            raise ValueError(
+                "telemetry_omit_payload=true requires telemetry_subject_hash_key "
+                "to be set. Without it, subject_id still leaves the pod in clear "
+                "text, which is exactly what payload-omit mode exists to prevent "
+                "(TRUS-2002)."
+            )
+        return self
 
     # ─── HTTP server ─────────────────────────────────────────────────
     host: str = Field(default="0.0.0.0")  # noqa: S104 - container binds all
