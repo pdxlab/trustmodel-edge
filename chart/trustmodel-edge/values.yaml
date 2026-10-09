@@ -56,12 +56,25 @@ logLevel: INFO          # DEBUG | INFO | WARNING | ERROR
 # ─── Telemetry buffer ────────────────────────────────────────────────
 telemetry:
   queueSize: 10000      # max in-memory events before back-pressure
-  # TRUS-1725 — for PHI / PCI / GDPR tenants where the raw ``args`` (e.g.
-  # patient-facing model output) must not leave the pod. When true, the
-  # forwarded audit event carries ``action_payload={}``; verdict / rule_id /
-  # reason / redactions still populate from the in-pod evaluation. OFF
-  # (default) preserves pre-1725 wire behaviour.
-  omitPayload: false
+  # TRUS-1725 / TRUS-2002 — keep the raw ``args`` (e.g. patient-facing model
+  # output) inside the pod. When true (the default), the forwarded audit
+  # event carries ``action_payload={}``; verdict / rule_id / reason /
+  # redactions still populate from the in-pod evaluation. Set false only if
+  # you deliberately want raw args forwarded to TrustModel.
+  omitPayload: true
+  # TRUS-2002 — HMAC key used to pseudonymize ``subject_id`` in forwarded
+  # audit events while omitPayload is true. Leave both empty and the subject
+  # is withheld entirely (most private, but per-subject recourse lookups
+  # cannot correlate events). Set one so the same subject maps to the same
+  # pseudonym on every replica:
+  #   subjectHashKey               — inline value; the chart creates a Secret.
+  #   subjectHashKeyExistingSecret — name of a Secret you manage (Vault,
+  #                                  External Secrets, Sealed Secrets) holding
+  #                                  the key under "subject-hash-key". Wins
+  #                                  over subjectHashKey when both are set.
+  # Changing the key changes every pseudonym, so treat it as long-lived.
+  subjectHashKey: ""
+  subjectHashKeyExistingSecret: ""
 
 # ─── Multi-policy routing (TRUS-1716) ────────────────────────────────
 # Enable per-name policy routing via ``policy_name`` on /v1/decide.

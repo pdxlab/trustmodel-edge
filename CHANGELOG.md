@@ -6,6 +6,43 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 once it reaches 1.0.0. Pre-1.0 releases may introduce breaking changes on minor bumps.
 
+## [Unreleased]
+
+### Changed — raw action payloads and subject IDs stay in the pod by default (TRUS-2002)
+
+**Behaviour change on upgrade. Read before rolling out.**
+
+- **`EDGE_TELEMETRY_OMIT_PAYLOAD` now defaults to `true`** (Helm:
+  `telemetry.omitPayload: true`). Audit events forwarded to TrustModel carry
+  `action_payload: {}`. Rule matching still runs on the real args inside the
+  pod, so verdicts, rule IDs, reasons and redactions are unchanged.
+- **`subject_id` never leaves the pod in clear text while payload-omit is on.**
+  - With `EDGE_TELEMETRY_SUBJECT_HASH_KEY` set, it is sent as an HMAC-SHA256
+    pseudonym (same subject → same pseudonym, so per-subject recourse lookups
+    still correlate).
+  - Without a key, it is **withheld** (sent empty) and Edge logs
+    `edge.telemetry.subject_withheld` at startup.
+- A missing hash key **no longer fails startup**. (Unreleased `main` briefly
+  refused to start in that state; that would have broken every existing
+  deployment once payload-omit became the default.)
+- To keep the previous wire format (raw args and raw subject forwarded), opt
+  out explicitly: `EDGE_TELEMETRY_OMIT_PAYLOAD=false` / Helm
+  `telemetry.omitPayload: false`.
+
+### Added — Helm wiring for the subject hash key
+
+- `telemetry.subjectHashKey` (the chart creates a Secret) or
+  `telemetry.subjectHashKeyExistingSecret` (a Secret you manage, key
+  `subject-hash-key`). Delivered to the pod as `EDGE_TELEMETRY_SUBJECT_HASH_KEY`
+  via `secretKeyRef`, never through the ConfigMap. Use the same key on every
+  replica, and treat it as long-lived: changing it changes every pseudonym.
+
+### Fixed
+
+- The chart rendered `telemetry.omitPayload` with `| default false`; Helm's
+  `default` treats an explicit `false` as empty, so it could not be used with
+  a `true` default. Rendered verbatim now.
+
 ## [0.4.2] — 2026-07-23
 
 ### Added — `EDGE_TELEMETRY_DIR` config for split state/telemetry storage

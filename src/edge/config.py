@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, HttpUrl, model_validator
+from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -152,20 +152,23 @@ class Settings(BaseSettings):
         description="Python log level: DEBUG / INFO / WARNING / ERROR",
     )
 
-    # ─── Telemetry payload mode (TRUS-1725) ──────────────────────────
-    # For PHI / PCI / GDPR tenants where the raw ``args`` (e.g. patient-
-    # facing model output) must never leave the Edge pod. When true, the
-    # decide route forwards the audit event with ``action_payload={}``;
-    # rule matching still runs against the real args in-pod so
-    # ``verdict / rule_id / reason / redactions`` stay accurate. Default
-    # OFF preserves pre-1725 wire behaviour.
+    # ─── Telemetry payload mode (TRUS-1725, TRUS-2002) ───────────────
+    # Keeps the raw ``args`` (e.g. patient-facing model output) inside the
+    # Edge pod. When true, the decide route forwards the audit event with
+    # ``action_payload={}``; rule matching still runs against the real args
+    # in-pod so ``verdict / rule_id / reason / redactions`` stay accurate.
+    #
+    # TRUS-2002: default ON. Edge is sold as "your data stays in your VPC",
+    # and shipping raw action payloads by default contradicted that. A
+    # tenant that wants the raw payload forwarded must now opt out
+    # explicitly with ``EDGE_TELEMETRY_OMIT_PAYLOAD=false``.
     telemetry_omit_payload: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Emit audit events with an empty action_payload. Set true for "
-            "tenants under PHI/PCI/GDPR where the raw args must not leave "
-            "the pod. Evaluation runs against the real args in-pod; only "
-            "the telemetry-forwarded copy is emptied."
+            "Emit audit events with an empty action_payload (default). "
+            "Evaluation runs against the real args in-pod; only the "
+            "telemetry-forwarded copy is emptied. Set false to forward the "
+            "raw args to TrustModel."
         ),
     )
     # TRUS-2002 — TRUS-1725 only stripped action_payload; subject_id (the
@@ -175,25 +178,29 @@ class Settings(BaseSettings):
     # HMAC (not a bare hash) because subject spaces are often low-entropy
     # and enumerable — emails, usernames, sequential customer IDs — so an
     # unkeyed hash is a dictionary-attack surface, not real anonymization.
+    #
+    # Not required: with payload-omit on and no key, subject_id is withheld
+    # (sent empty) rather than refusing to start. Failing startup would
+    # break every existing deployment on upgrade now that payload-omit is
+    # the default, and withholding is strictly more private than hashing.
+    # The cost is that per-subject recourse lookups cannot correlate events
+    # until a key is set — ``subject_id_mode`` reports which applies.
     telemetry_subject_hash_key: str = Field(
         default="",
         description=(
             "HMAC key used to pseudonymize subject_id in outbound telemetry "
-            "when telemetry_omit_payload is on. Required whenever "
-            "telemetry_omit_payload=true — see the validator below."
+            "when telemetry_omit_payload is on. Unset → subject_id is "
+            "withheld entirely. Must be the same on every replica so the "
+            "same subject maps to the same pseudonym."
         ),
     )
 
-    @model_validator(mode="after")
-    def _require_subject_hash_key_when_omitting_payload(self) -> Settings:
-        if self.telemetry_omit_payload and not self.telemetry_subject_hash_key:
-            raise ValueError(
-                "telemetry_omit_payload=true requires telemetry_subject_hash_key "
-                "to be set. Without it, subject_id still leaves the pod in clear "
-                "text, which is exactly what payload-omit mode exists to prevent "
-                "(TRUS-2002)."
-            )
-        return self
+    @property
+    def subject_id_mode(self) -> str:
+        """How subject_id leaves the pod: ``raw``, ``hashed`` or ``withheld``."""
+        if not self.telemetry_omit_payload:
+            return "raw"
+        return "hashed" if self.telemetry_subject_hash_key else "withheld"
 
     # ─── HTTP server ─────────────────────────────────────────────────
     host: str = Field(default="0.0.0.0")  # noqa: S104 - container binds all
