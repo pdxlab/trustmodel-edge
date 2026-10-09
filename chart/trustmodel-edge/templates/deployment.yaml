@@ -54,6 +54,17 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            {{- with .Values.telemetry }}
+            {{- if or .subjectHashKeyExistingSecret .subjectHashKey }}
+            # TRUS-2002 — subject pseudonymization key, from a Secret (never
+            # the ConfigMap). See values.yaml telemetry.subjectHashKey.
+            - name: EDGE_TELEMETRY_SUBJECT_HASH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .subjectHashKeyExistingSecret | default (printf "%s-telemetry" (include "trustmodel-edge.fullname" $)) }}
+                  key: subject-hash-key
+            {{- end }}
+            {{- end }}
           startupProbe:
             httpGet:
               path: /health/live

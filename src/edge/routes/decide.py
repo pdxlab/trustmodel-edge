@@ -238,16 +238,16 @@ async def decide(
     # back-pressure / disk-full can drop the row, but the decision has
     # already been returned to the caller. Counter for ops visibility.
     #
-    # TRUS-1725 — when ``telemetry_omit_payload`` is on (PHI/PCI/GDPR
-    # tenants), forward the audit event with an empty ``action_payload``.
+    # TRUS-1725 — when ``telemetry_omit_payload`` is on (the default since
+    # TRUS-2002), forward the audit event with an empty ``action_payload``.
     # Rule matching already ran against ``body.args`` above, so verdict/
     # rule_id/reason/redactions stay correct; only the outbound copy of
     # the raw payload is dropped.
     forwarded_args = {} if cfg.telemetry_omit_payload else body.args
     # TRUS-2002 — action_payload alone wasn't enough: subject_id (who the
-    # decision was about) still left the pod unredacted. Settings validation
-    # guarantees telemetry_subject_hash_key is set whenever this flag is on,
-    # so the pseudonym is always available here.
+    # decision was about) still left the pod unredacted. With a hash key the
+    # subject is pseudonymized; without one ``hash_subject`` returns "" and
+    # the subject is withheld entirely — never sent in clear text.
     forwarded_subject = (
         hash_subject(body.subject, cfg.telemetry_subject_hash_key)
         if cfg.telemetry_omit_payload

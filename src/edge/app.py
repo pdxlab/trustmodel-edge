@@ -49,6 +49,24 @@ log = structlog.get_logger()
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     cfg: Settings = app.state.settings
     log.info("edge.startup", version=__version__, tenant=cfg.tenant_id)
+    # TRUS-2002 — state once, at startup, what leaves the pod. Withheld is
+    # the safe outcome of a missing hash key, but it silently stops
+    # per-subject recourse correlation, so an operator should see why.
+    log.info(
+        "edge.telemetry.privacy",
+        omit_payload=cfg.telemetry_omit_payload,
+        subject_id_mode=cfg.subject_id_mode,
+    )
+    if cfg.subject_id_mode == "withheld":
+        log.warning(
+            "edge.telemetry.subject_withheld",
+            detail=(
+                "EDGE_TELEMETRY_SUBJECT_HASH_KEY is not set, so subject_id is "
+                "withheld from audit telemetry and per-subject recourse lookups "
+                "cannot correlate events. Set a key (identical on every "
+                "replica) to send a keyed pseudonym instead."
+            ),
+        )
 
     heartbeat_task: asyncio.Task | None = None
     sync_task: asyncio.Task | None = None
