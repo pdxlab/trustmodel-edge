@@ -1,0 +1,13 @@
+# Code owners for this repository.
+#
+# Every change requires an approving review from a member of
+# @pdxlab/engineering other than the author. This implements the
+# "Require peer review or manager approval before merge or deploy"
+# clause of the Change & Release Management policy (SOC 2 CC8.1, CC5.2)
+# and the Segregation of duties control (CC5.1).
+#
+# A GitHub App cannot be a code owner, so an automated review alone
+# cannot satisfy this gate. Automated review is an additional check,
+# not the approval of record.
+
+* @pdxlab/engineering
