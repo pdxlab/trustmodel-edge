@@ -8,6 +8,8 @@ once it reaches 1.0.0. Pre-1.0 releases may introduce breaking changes on minor 
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-20
+
 ### Changed — raw action payloads and subject IDs stay in the pod by default (TRUS-2002)
 
 **Behaviour change on upgrade. Read before rolling out.**
@@ -42,6 +44,16 @@ once it reaches 1.0.0. Pre-1.0 releases may introduce breaking changes on minor 
 - The chart rendered `telemetry.omitPayload` with `| default false`; Helm's
   `default` treats an explicit `false` as empty, so it could not be used with
   a `true` default. Rendered verbatim now.
+
+## [0.5.1] — 2026-08-14
+
+- `EDGE_TELEMETRY_OMIT_PAYLOAD` toggle (default off in this release) to keep
+  `action_payload` in the pod for PHI/PCI/GDPR tenants (TRUS-1725, #13).
+
+## [0.5.0] — 2026-08-13
+
+- Multi-policy cache, plural policy fetch and name-based `/decide` routing
+  (TRUS-1716, #12).
 
 ## [0.4.2] — 2026-07-23
 
