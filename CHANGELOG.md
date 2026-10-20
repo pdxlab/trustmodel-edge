@@ -8,6 +8,42 @@ once it reaches 1.0.0. Pre-1.0 releases may introduce breaking changes on minor 
 
 ## [Unreleased]
 
+### Fixed — a half-written cert rotation no longer takes Edge down (TRUS-2374)
+
+In 0.5.1, if the rotation write stopped part-way, `cert.pem` and `key.pem`
+were new but `meta.json` kept the old expiry. Once that date passed, every new
+pod or instance treated its valid credentials as expired. It then re-enrolled
+with the already-used bootstrap token, got `HTTP 401
+invalid_or_expired_bootstrap_token`, and exited.
+
+- **Expiry is read from `cert.pem` itself.** `meta.json`'s `cert_valid_to` is
+  now informational. A state dir that already has a stale `meta.json` works
+  as-is after upgrade (Edge logs `edge.identity.meta_stale`), so no manual
+  correction is needed.
+- **Credential writes are all-or-nothing.** All four files are written to
+  temp files first and renamed into place only once every write succeeded.
+  A failed write leaves the previous set untouched.
+- **No more `chmod` on the private key.** `key.pem` is created `0600`. Some
+  volumes (GCS FUSE, other FUSE mounts) take file modes from their mount
+  options; there Edge logs `edge.identity.key_permissions_not_enforced`
+  instead of failing.
+- **A failed rotation write is logged and retried.** The new key goes into
+  use at once (the control plane has already retired the old one). Edge
+  logs `edge.rotate.persist_failed` at error and retries the write on every
+  heartbeat until it succeeds.
+- **The heartbeat loop no longer dies silently.** Unexpected errors are
+  logged as `edge.heartbeat.tick_failed` and the loop keeps running.
+- **Replicas sharing one state dir pick up each other's rotations.** On a
+  401/403, Edge first loads newer credentials from the state dir and only
+  treats the 401 as revocation if there are none.
+
+**Events worth alerting on:**
+
+- `edge.rotate.persist_failed`
+- `edge.heartbeat.tick_failed`
+- `edge.identity.cert_key_mismatch`
+- `edge.identity.unreadable`
+
 ### Changed — raw action payloads and subject IDs stay in the pod by default (TRUS-2002)
 
 **Behaviour change on upgrade. Read before rolling out.**

@@ -48,6 +48,27 @@ def _reset_singletons() -> Iterator[None]:
 
 
 @pytest.fixture
+def record_logs(monkeypatch: pytest.MonkeyPatch):
+    """Swap a module's ``log`` for a recorder; returns the shared event list.
+
+    ``structlog.testing.capture_logs`` is unreliable here: ``configure_logging``
+    caches loggers on first use, so whether it captures depends on test order.
+    Each recorded entry is ``(level, event, fields)``.
+    """
+    events: list[tuple[str, str, dict]] = []
+
+    class _Recorder:
+        def __getattr__(self, level: str):
+            return lambda event, **fields: events.append((level, event, fields))
+
+    def _patch(module) -> list[tuple[str, str, dict]]:
+        monkeypatch.setattr(module, "log", _Recorder())
+        return events
+
+    return _patch
+
+
+@pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         tenant_id="test-tenant",

@@ -44,6 +44,13 @@ def bootstrap_if_needed(settings: Settings) -> EdgeCredentials:
             cert_valid_to=existing.cert_valid_to.isoformat(),
         )
         return existing
+    if existing:
+        log.warning(
+            "edge.enroll.credentials_expired",
+            edge_id=existing.edge_id,
+            cert_valid_to=existing.cert_valid_to.isoformat(),
+            detail="re-enrolling; a bootstrap token that was already used is rejected",
+        )
 
     token = read_bootstrap_token(settings.bootstrap_token_path, settings.bootstrap_token)
     if not token:
