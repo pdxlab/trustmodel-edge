@@ -1,0 +1,65 @@
+# Argus configuration for trustmodel-edge.
+#
+# This repo is different from the rest of the fleet in one way that matters:
+# it is SHIPPED TO CUSTOMER SITES as a Helm chart and runs inside their
+# infrastructure. A mistake here is not a bad deploy we roll back — it is a
+# release a customer installs, and TRUS-2004 records that KPMG holds a written
+# "data never leaves" commitment that this component is the boundary for.
+
+skills:
+  - security
+  - data-protection
+  - correctness
+  - concurrency
+  - performance
+  - api-compat
+
+# The three dropped fleet-wide (tests, observability, dependencies) raised 122
+# of 297 findings but only 1 of 17 blockers. Dependencies are covered by
+# Dependabot alerts, secrets by the gitleaks workflow.
+
+gate: major
+
+verdict:
+  # false, not true: GITHUB_TOKEN cannot submit approving reviews unless the
+  # org lets ANY workflow token approve (TRUS-2326, open). Left at true, every
+  # CLEAN PR would raise on `gh pr review --approve`, post nothing, and the
+  # no-review guard would turn the check red.
+  allow_approve: false
+  on_findings: request_changes
+  never_approve_authors:
+    - "dependabot[bot]"
+    - "renovate[bot]"
+
+paths:
+  # Read these with more suspicion than the rest of the tree. These are prompt
+  # text, not a skill selector — they tell the reviewer where the damage is,
+  # they do not change which dimensions run.
+  strict:
+    # Credential and certificate lifecycle. TRUS-2374: a half-written rotation
+    # left meta.json stale, new instances re-enrolled with a spent bootstrap
+    # token and crashed — xspan QA was down. persist_credentials still claims
+    # to "atomically write all four files" while doing four sequential
+    # write_text calls with an os.chmod between them.
+    - "src/edge/identity.py"
+    - "src/edge/enroll.py"
+    # The only outbound path to the control plane. Anything here is the
+    # in-VPC promise.
+    - "src/edge/control_plane.py"
+    - "src/edge/telemetry/**"
+    # Secrets and the network boundary as the customer actually receives them.
+    - "chart/trustmodel-edge/templates/secret.yaml"
+    - "chart/trustmodel-edge/templates/telemetry-secret.yaml"
+    - "chart/trustmodel-edge/templates/networkpolicy.yaml"
+  skip:
+    - "CHANGELOG.md"
+    - "**/*.lock"
+    - "poetry.lock"
+
+limits:
+  max_inline_comments: 15
+  # This repo is small; 4000 lines is well above any real PR here. It exists so
+  # a generated-file accident cannot turn one PR into a very expensive review.
+  max_diff_lines: 4000
+
+model: ""

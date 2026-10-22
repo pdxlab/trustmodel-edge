@@ -1,0 +1,204 @@
+name: Argus Review
+
+# Argus PR reviewer (TRUS-1647) — vendored under .argus/ (from karlmehta/argus).
+# Reviews across security, data-protection, correctness, concurrency, performance,
+# api-compat, tests, observability, dependencies; posts one severity-ranked review.
+# To update skills/prompts, re-vendor from karlmehta/argus@v1.
+#
+# AUTH: Azure OIDC. No model API key is stored here — azure/login exchanges
+# GitHub's short-lived OIDC token for an Azure token and the engine calls Azure
+# OpenAI with it. Nothing to rotate. The verdict policy still comes from
+# .argus/config/argus.yml.
+#
+# MODEL: Azure OpenAI `gpt-5.5`, a first-party Azure service drawn from the
+# Azure credit. It previously ran Claude via Foundry, which bills through the
+# Azure Marketplace and is NOT credit-eligible — ~$450/month of cash (TRUS-2292).
+# The review itself is unchanged: .argus/{config,prompts,skills,memory} are read
+# verbatim by the engine in pdxlab/argus-engine.
+
+on:
+  # Auto-review on open / reopen / ready-for-review, plus on-demand via an
+  # '@argus' comment. Deliberately NOT on 'synchronize': re-reviewing every push
+  # is the cost problem #503 fixed. Push fixes, then comment '@argus'.
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  # On-demand against a chosen PR. Needed because `pull_request` deliberately
+  # omits 'synchronize', so a push does not re-trigger; without this the only
+  # ways to re-run were an '@argus' comment or close/reopen. `required` is what
+  # closes the empty-PR path: the trigger and the job guard already admitted
+  # workflow_dispatch, but neither expression below had anything to resolve.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to review
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+
+concurrency:
+  group: argus-${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+  # Cancel only superseded pull_request runs. NOT for issue_comment: Argus
+  # posting its own review fires a new issue_comment event, and because this
+  # concurrency group is workflow-level while the bot guard is a job-level
+  # `if:`, that run joins the group and cancels the still-finishing original
+  # BEFORE the guard can skip it — silently losing a completed review.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  review:
+    # Team-invokable, auto-reviewing.
+    #
+    # UNCHANGED from the #528 lock-down, and the part that actually mattered:
+    # Argus cannot merge — no `gh pr merge` in allowedTools, no
+    # automerge workflow in this repo, and repo-level allow_auto_merge is false.
+    # The auto-approve + auto-merge loop behind the #528 incident stays
+    # impossible three ways over.
+    #
+    # CHANGED (TRUS-1955): this repo now matches the other seven. Any human with
+    # write access can comment '@argus', and PRs are auto-reviewed on open /
+    # reopen / ready-for-review. Previously Argus was installed here but pinned
+    # to the owner and never ran on its own, so it was dormant in practice.
+    # The #528 incident was an auto-approve + auto-MERGE loop; auto-review was
+    # never the cause, and the merge path stays closed. Bots are excluded so
+    # Argus's own comment cannot retrigger it.
+    if: >
+      (github.event_name == 'workflow_dispatch' &&
+        github.actor != 'dependabot[bot]') ||
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.draft == false &&
+        github.event.pull_request.user.type != 'Bot' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+        contains(github.event.comment.body, '@argus'))
+    runs-on: ubuntu-latest
+    steps:
+      # AUTHENTICATION IS NOT AUTHORIZATION. The job guard admits
+      # OWNER/MEMBER/COLLABORATOR via `author_association`, but those are
+      # RELATIONSHIP labels, not permissions: a read-only org member commenting
+      # on a PR is still `MEMBER`. This job runs in the default-branch context
+      # with `id-token: write` and `pull-requests: write`, so the comment that
+      # starts it is an authorization boundary and has to be checked as one.
+      #
+      # Not exploitable in pdxlab today — all 13 org members are explicit
+      # collaborators with write or admin — but it opens silently the first time
+      # anyone is added with read or triage. Found by Argus reviewing the
+      # agp-control-plane rollout of this same workflow.
+      #
+      # ACTOR comes through env, never interpolated into the script: a login is
+      # attacker-influenced text and `${{ }}` inside a `run:` is substituted
+      # before bash parses it (argus-engine#1).
+      - name: Verify the commenter can actually write here
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+          perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" \
+                   --jq '.permission')
+          echo "$ACTOR has '$perm' on $GITHUB_REPOSITORY"
+          case "$perm" in
+            admin|maintain|write) ;;
+            *) echo "::error::$ACTOR does not have write access to this repository; refusing to run a privileged review job."
+               exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The engine feeds a PR diff — author-controlled content — to a model
+          # that can call read_file. Don't leave a usable credential in
+          # .git/config for it to find. `gh` uses GH_TOKEN explicitly instead.
+          persist-credentials: false
+          # Check out the BASE, never the PR. The previous revision of this
+          # comment claimed the PR was not checked out while omitting `ref:`
+          # entirely — and on `pull_request` the default IS the PR merge
+          # commit, so author-controlled files still landed in a workspace that
+          # then holds an Azure OIDC session and a write-capable token. Caught
+          # by Argus reviewing this very PR.
+          #
+          # The engine does not need the PR on disk: it fetches PR objects
+          # itself and reads them with `git show <sha>:<path>`. The workspace
+          # only has to supply trusted `.argus/` config, which the base has.
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+
+      - name: Azure login (OIDC — no stored credential)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID_ARGUS }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID_QA }}
+
+      - name: Record start time
+        id: argus_start
+        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      # The engine lives in pdxlab/argus-engine, pinned. It is deliberately
+      # NOT run from this checkout: this job holds an Azure OIDC session and a
+      # GH_TOKEN, and a same-repo PR can edit anything in the workspace — so
+      # executing workspace code here would let a PR run arbitrary code with
+      # those credentials. The action's own checkout supplies the engine; the
+      # workspace supplies only .argus/ config, which is data, not code.
+      - name: Run Argus
+        # Pinned by SHA, not @v1: a movable tag means whoever can move it
+        # controls code that runs with this job's Azure OIDC session.
+        uses: pdxlab/argus-engine@19333d1f9176967d831d99f1ec9e264842db210f  # v1
+        with:
+          # `inputs.pr` FIRST: on a workflow_dispatch the other two are both
+          # unset, so leaving it last resolves the whole expression to "".
+          pr: ${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+          repo: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          # ONE group: one conversation covering every dimension in sequence.
+          # Matches the rest of the fleet — see aurora-gateway#908 for the
+          # cost/quality measurements behind the setting. Rollback: raise it.
+          parallelism: "1"
+
+      # A green "Argus Review" check is not proof a review happened. That has
+      # bitten three separate ways (TRUS-1955): an approval with an empty body,
+      # a stub review pointing at a separate comment, and a run that finished
+      # clean and posted nothing at all. Each time the only signal was green.
+      # Turn a silent no-review into a red check.
+      #
+      # Runs on dispatch too. It was excluded only because dispatch had no PR
+      # number to check; now that `inputs.pr` supplies one, excluding it would
+      # leave the one path added to make reruns verifiable as the one path
+      # where green proves nothing. Caught by Argus on this PR.
+      - name: Fail if Argus posted no review
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+          SINCE: ${{ steps.argus_start.outputs.ts }}
+        run: |
+          set -euo pipefail
+          # An empty SINCE means `Record start time` never ran, which means an
+          # earlier step failed and Argus never started. Without this the jq
+          # comparison below is `>= ""`, which every review satisfies, so the
+          # guard counts reviews from PREVIOUS runs and reports success for a
+          # run that posted nothing. Observed live: a dispatch whose Azure
+          # login failed reported "Argus posted 2 review(s)".
+          if [ -z "${SINCE:-}" ] || [ -z "${PR:-}" ]; then
+            echo "::error::Argus never started (no PR number or start time) — an earlier step failed. See TRUS-1955."
+            exit 1
+          fi
+          n=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate \
+                | jq --arg since "$SINCE" '[.[]
+                    | select(.user.login == "github-actions[bot]")
+                    | select(.submitted_at >= $since)
+                    | select((.body | length) > 0)] | length')
+          if [ "${n:-0}" -eq 0 ]; then
+            echo "::error::Argus finished but posted no review with a body on #$PR. See TRUS-1955."
+            exit 1
+          fi
+          echo "Argus posted $n review(s) with a body on #$PR."
