@@ -8,6 +8,18 @@ once it reaches 1.0.0. Pre-1.0 releases may introduce breaking changes on minor 
 
 ## [Unreleased]
 
+### Fixed — the runtime reports its real version
+
+- `/health/ready`, the startup log and the OpenAPI schema reported `0.1.0` on
+  every release since the scaffold. `edge.__version__` is now `0.6.0` and is
+  the single source for the package version (`pyproject.toml` reads it via
+  `[tool.hatch.version]`). `tests/test_version.py` fails if it drifts from the
+  chart's `appVersion` — bump both when cutting a release.
+
+### Docs
+
+- README: current feature status and a `docker run` quickstart (no Kubernetes).
+
 ## [0.6.0] — 2026-10-20
 
 ### Changed — raw action payloads and subject IDs stay in the pod by default (TRUS-2002)

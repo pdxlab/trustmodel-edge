@@ -18,22 +18,59 @@ Tracking: [TRUS-984](https://predixtions.atlassian.net/browse/TRUS-984)
 (EPIC) · [TRUS-986](https://predixtions.atlassian.net/browse/TRUS-986)
 (this scaffold).
 
-## Status — v0.1.0 scaffold
+## Status — v0.6.0
 
 | Surface | Status | Implementing ticket |
 |---|---|---|
-| Helm chart + container | shipped (this repo) | TRUS-986 |
+| Helm chart + container (amd64 + arm64) | shipped | TRUS-986 |
 | `GET /health/live`, `/health/ready` | shipped | TRUS-986 |
-| `POST /v1/decide` | **501 stub** | TRUS-988 |
-| `POST /v1/enroll-callback` | **501 stub** | TRUS-987 |
-| `POST /v1/telemetry-flush` | **501 stub** | TRUS-989 |
-| Outbound-only enrollment + bootstrap token | not yet | TRUS-987 |
-| Policy cache + offline-tolerant decide | not yet | TRUS-988 |
-| On-disk telemetry queue + outbound sync | not yet | TRUS-989 |
+| Outbound-only enrollment + bootstrap token, heartbeat | shipped | TRUS-987 |
+| Policy cache + offline-tolerant `POST /v1/decide` | shipped | TRUS-988 |
+| On-disk telemetry queue + outbound sync | shipped | TRUS-989 |
+| Raw payloads + subject IDs kept in-pod by default | shipped | TRUS-1725, TRUS-2002 |
+| `POST /v1/enroll-callback` | **501 stub** (Edge never accepts inbound calls) | — |
 
-The chart is installable today. Decide / enroll / telemetry return 501 with
-a payload pointing at the implementing ticket — downstream callers can
-detect "not-yet-implemented" deterministically.
+See [CHANGELOG.md](CHANGELOG.md) for per-release detail.
+
+## Quickstart with Docker (no Kubernetes)
+
+The image is public on GHCR — no registry login needed.
+
+```bash
+# 1. Put the one-time bootstrap token from the TrustModel console in an env
+#    file (keeps it out of shell history). It is spent on first enrollment.
+cat > edge.env <<'ENV'
+EDGE_TENANT_ID=<your-tenant>
+EDGE_BOOTSTRAP_TOKEN=<tm-bs-...>
+ENV
+
+# 2. Run. The named volume holds the mTLS cert, policy cache and telemetry
+#    queue — without it a restart has to re-enroll with a spent token.
+docker run -d --name trustmodel-edge \
+  --env-file edge.env \
+  -v trustmodel-edge-state:/var/lib/trustmodel \
+  -p 8080:8080 \
+  --restart unless-stopped \
+  ghcr.io/pdxlab/trustmodel-edge:0.6.0
+
+# 3. Check it
+curl -s localhost:8080/health/live    # {"status":"ok"}
+curl -s localhost:8080/health/ready   # 200 once enrolled and policies synced
+docker logs trustmodel-edge
+```
+
+Notes:
+
+* Instead of `EDGE_BOOTSTRAP_TOKEN` you can mount the token as a file:
+  `-v "$PWD/bootstrap-token:/etc/trustmodel/bootstrap-token:ro"` (the file
+  must be readable by uid 10001, e.g. `chmod 0644`).
+* `/health/ready` returns 503 until enrollment and the first policy sync
+  succeed. With no token, or if the control plane is unreachable, the
+  container exits non-zero so `--restart` retries it.
+* `EDGE_CONTROL_PLANE_URL` defaults to `https://api.trustmodel.ai`; override
+  it only for QA or self-hosted control planes.
+* Pin a version tag in production. `:latest` follows semver releases;
+  `:<branch>` tags are QA builds from `release-branch.yml`.
 
 ## Quickstart on kind (5 min)
 
