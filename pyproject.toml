@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "edge"
-version = "0.1.0"
+dynamic = ["version"]
 description = "TrustModel Edge — in-VPC AGP data plane"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -50,6 +50,9 @@ dev = [
 
 [project.scripts]
 edge = "edge.__main__:main"
+
+[tool.hatch.version]
+path = "src/edge/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/edge"]
