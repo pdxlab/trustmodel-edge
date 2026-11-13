@@ -12,7 +12,11 @@ never accepts inbound connections from TrustModel.
 The direct SDK pattern (`agent → HTTPS → api.trustmodel.ai`) works on a
 laptop but fails for any Fortune 500 with restricted egress, no public
 internet, or data-residency rules. Edge lets customers run AGP **inside
-their own VPC** — agent data and decision payloads never leave the cluster.
+their own VPC**. By default (v0.6.0+), tool arguments stay in the pod and
+subject IDs are pseudonymised or withheld; decision metadata (agent, policy,
+verdict, reason, tool name, matched rule, latency) is forwarded to TrustModel
+over mTLS for audit. Setting `telemetry.omitPayload: false`, or running v0.5.x,
+also forwards tool arguments and clear subject IDs.
 
 Tracking: [TRUS-984](https://predixtions.atlassian.net/browse/TRUS-984)
 (EPIC) · [TRUS-986](https://predixtions.atlassian.net/browse/TRUS-986)
