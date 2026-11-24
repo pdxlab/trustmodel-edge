@@ -44,6 +44,20 @@ invalid_or_expired_bootstrap_token`, and exited.
 - `edge.identity.cert_key_mismatch`
 - `edge.identity.unreadable`
 
+### Fixed — the runtime reports its real version
+
+- `/health/ready`, the startup log and the OpenAPI schema reported `0.1.0` on
+  every release since the scaffold. `edge.__version__` is now `0.6.0` and is
+  the single source for the package version (`pyproject.toml` reads it via
+  `[tool.hatch.version]`). `tests/test_version.py` fails if it drifts from the
+  chart's `appVersion` — bump both when cutting a release.
+
+### Docs
+
+- README: current feature status and a `docker run` quickstart (no Kubernetes).
+
+## [0.6.0] — 2026-10-20
+
 ### Changed — raw action payloads and subject IDs stay in the pod by default (TRUS-2002)
 
 **Behaviour change on upgrade. Read before rolling out.**
@@ -78,6 +92,16 @@ invalid_or_expired_bootstrap_token`, and exited.
 - The chart rendered `telemetry.omitPayload` with `| default false`; Helm's
   `default` treats an explicit `false` as empty, so it could not be used with
   a `true` default. Rendered verbatim now.
+
+## [0.5.1] — 2026-08-14
+
+- `EDGE_TELEMETRY_OMIT_PAYLOAD` toggle (default off in this release) to keep
+  `action_payload` in the pod for PHI/PCI/GDPR tenants (TRUS-1725, #13).
+
+## [0.5.0] — 2026-08-13
+
+- Multi-policy cache, plural policy fetch and name-based `/decide` routing
+  (TRUS-1716, #12).
 
 ## [0.4.2] — 2026-07-23
 
